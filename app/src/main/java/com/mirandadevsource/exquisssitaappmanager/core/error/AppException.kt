@@ -1,0 +1,1 @@
+﻿package com.mirandadevsource.exquisssitaappmanager.core.error
