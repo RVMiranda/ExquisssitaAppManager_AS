@@ -84,6 +84,21 @@ El diff de pg-delta todavía imprime cuatro `CREATE OR REPLACE FUNCTION` por fin
 - No insertar usuarios directamente en `auth.users`. Crear la cuenta mediante Supabase Auth y vincular el perfil usando `user_roles`/`empleados.user_id` o `clientes.user_id`, según la app.
 - La interfaz de personal todavía debe integrarse con la regla de cuenta de cliente: empleados buscan y acreditan por QR; la app de clientes crea/vincula la cuenta y conserva el token QR estable.
 
+## Acceso de gerentes y nómina semanal
+
+La migración `20261010195445_payroll_manager_employee_access.sql` habilita el acceso para el nuevo alcance acordado:
+
+- El directorio incluye empleados de piso sin cuenta de Auth (`empleados.user_id = NULL`). Solo el administrador y gerentes asignados desde un entorno administrativo pueden iniciar sesión en esta app.
+- `public.auth_role()` autoriza `admin` y `gerente`; un gerente requiere un perfil de empleado activo vinculado por `user_id`. El rol histórico `empleado` se conserva en la restricción para compatibilidad, pero no autoriza esta app.
+- `set_user_role` sigue siendo exclusivo de `admin` y admite asignar `gerente`. El usuario gerente debe tener una cuenta Auth y un perfil activo vinculado antes de iniciar sesión. Los permisos de columna impiden que la app cambie `user_id` o asigne roles.
+- Admin y gerente pueden leer/crear/actualizar los perfiles y consultar la nómina. Las filas se desactivan con `activo = false`; la app no tiene permisos de borrado definitivo.
+- La nómina es una cuota semanal fija. `salario` y `monto` guardan centavos MXN; la app captura/muestra pesos (por ejemplo, `$1,200.00` → `120000`). `dia_pago` usa ISO 1=lunes…7=domingo. El periodo inicia lunes, y la fecha programada se deriva de ese día.
+- `registrar_pago_nomina` registra el importe desde el salario vigente, auditoría `registrado_por` y un único pago por empleado/periodo. El cliente no puede insertar, editar o borrar directamente el historial.
+- El remoto tenía dos asignaciones `admin` y ninguna `gerente`. La migración no cambia esas asignaciones; los gerentes se crearán y vincularán cuando el administrador confirme las cuentas.
+- Las tres cuotas y el pago observados eran registros de prueba. Las cuotas guardadas como `100` se normalizan a `10000` centavos (100 pesos); el importe `120000` ya corresponde a `$1,200.00` y se conserva.
+
+La migración quedó validada con `supabase db reset --local` y aparece emparejada en el remoto. La siguiente migración, `20261010200756_reject_missing_roles_for_sensitive_actions.sql`, cierra el caso de `auth_role() = NULL`: ahora devuelve cadena vacía cuando no hay asignación y `set_user_role` rechaza explícitamente cualquier identidad que no tenga rol `admin`. Las 17 versiones locales/remotas están sincronizadas; el dry-run propuso únicamente cada migración nueva antes de su aplicación. La prueba de gerente en local usó datos ficticios dentro de una transacción revertida. No insertar usuarios directamente en `auth.users`; usar Supabase Auth y después asignar el rol con `set_user_role` y vincular el perfil desde un entorno administrativo.
+
 ## Nota para Antigravity
 
 Usar este archivo y `docs/backend-contract.md` como contexto actualizado. El contrato real de lealtad usa `clientes.qr_token_hash`, `clientes.user_id`, `puntos_lealtad`, `visitas_totales` y `visitas_clientes.fecha`. El token QR se envía a la RPC, pero solo se almacena su SHA-256. No restaurar las migraciones Android descartadas ni cambiar la regla de cliente registrado para ganar puntos.

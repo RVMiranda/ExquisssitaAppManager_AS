@@ -51,6 +51,11 @@ class AuthRepositoryImpl @Inject constructor(
         }
 
         val cached = readCachedMetadata()
+        if (cached != null && !cached.isAllowedAppRole()) {
+            clearLocalSession()
+            mutableState.value = AuthState.SignedOut
+            return@withLock
+        }
         if (cached != null && !isWithinSessionLimit(cached.startedAtEpochMillis)) {
             clearLocalSession()
             mutableState.value = AuthState.SignedOut
@@ -166,6 +171,7 @@ class AuthRepositoryImpl @Inject constructor(
             .decodeList<UserRoleDto>()
         val roleRecord = roleRows.singleOrNull() ?: throw notAuthorized()
         val role = UserRole.fromDatabase(roleRecord.role) ?: throw notAuthorized()
+        if (role !in setOf(UserRole.ADMIN, UserRole.GERENTE)) throw notAuthorized()
 
         val profileRows = supabase.from("empleados")
             .select(columns = Columns.list("id", "user_id", "nombre", "apellido", "activo")) {
@@ -217,6 +223,10 @@ class AuthRepositoryImpl @Inject constructor(
         val elapsed = System.currentTimeMillis() - startedAt
         return elapsed in 0..MAX_SESSION_MILLIS
     }
+
+    private fun CachedAuthMetadata.isAllowedAppRole(): Boolean =
+        UserRole.fromDatabase(role) == UserRole.ADMIN ||
+            UserRole.fromDatabase(role) == UserRole.GERENTE
 
     private fun CachedAuthMetadata.toAppSession(isOffline: Boolean) = AppUserSession(
         userId = userId,

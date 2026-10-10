@@ -5,7 +5,7 @@
 > Backend Remoto: Supabase / PostgreSQL (Proyecto Compartido)  
 > Regla Fundamental: Android es un cliente equivalente. No altera esquemas ni usa `service_role`.
 
-> **Estado de verificación (2026-10-10):** Los nombres de tablas y columnas en la sección 2 se contrastaron con el esquema remoto mediante Supabase CLI y con el volcado remoto del 2026-10-07 que conserva el proyecto Flutter. Este documento describe el esquema desplegado, no el modelo ideal que se quiere alcanzar. Las migraciones locales nuevas de Android no se consideran aplicadas hasta que `supabase migration list --linked` las muestre en ambos lados.
+> **Estado de verificación (2026-10-10):** Los nombres de tablas y columnas en la sección 2 se contrastaron con el esquema remoto mediante Supabase CLI y con el volcado remoto del 2026-10-07 que conserva el proyecto Flutter. El contrato de roles y nómina se actualizó con `20261010195445_payroll_manager_employee_access` y `20261010200756_reject_missing_roles_for_sensitive_actions`; las 17 migraciones aparecen emparejadas local/remoto. Las cuentas de gerentes se asignarán después, cuando estén creadas.
 > Los fragmentos de `CREATE TABLE` de esta sección resumen columnas/tipos/defaults; no pretenden reproducir todas las PK, FK, constraints, grants o políticas. Consultar la migración remota correspondiente antes de inferir esas reglas.
 
 ---
@@ -25,9 +25,10 @@ Todas las entidades sincronizables utilizan **UUID v4** como clave primaria:
 - Esto permite crear órdenes, líneas de detalle, pagos y movimientos en modo **completamente offline** sin requerir un viaje de ida y vuelta a secuencias o generadores de IDs remotos.
 
 ### 1.2 Regla de Tipos Monetarios
-- En PostgreSQL: Columnas monetarias definidas como `BIGINT` (ej. `precio_cents`, `monto_cents`).
-- En Kotlin (Android): Tipos de datos `Long`.
-- Cero uso de `Double` o `Float` en columnas de dinero en base de datos ni en transporte de red (DTOs).
+- En PostgreSQL, las cuotas semanales de empleados (`empleados.salario`) y los pagos (`historial_pagos_empleados.monto`) se almacenan como centavos enteros de MXN (`BIGINT`).
+- La app captura y muestra pesos; por ejemplo, `$1,200.00 MXN` se transporta y guarda como `120000`.
+- Kotlin usa `Long` para los centavos y conversión decimal exacta en los límites de UI/repositorio; no usa `Double` ni `Float` para dinero.
+- La cuota es semanal; no se divide entre semanas del mes. El total mensual depende de cuántos días de pago semanales caen en ese mes.
 
 ---
 
@@ -38,15 +39,16 @@ Mapea la identidad de Supabase Auth (`auth.users`) con el rol operativo en la ba
 ```sql
 CREATE TABLE public.user_roles (
     user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK (role IN ('admin', 'empleado')),
+    role TEXT NOT NULL CHECK (role IN ('admin', 'gerente', 'empleado')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 ```
 > [!NOTE]
 > - La tabla `public.user_roles` **no contiene columna `activo`**.
-> - La restricción `CHECK` actual en la base de datos remota admite los roles `'admin'` y `'empleado'`.
-> - Las políticas de seguridad (`user_roles_self_select`) permiten a un usuario autenticado leer su propio registro (`user_id = auth.uid()`), y a un usuario con rol `'admin'` consultar todos los roles.
+> - Los roles de acceso a la app son `admin` y `gerente`. `empleado` se conserva solo para compatibilidad histórica y no autoriza el acceso a esta app.
+> - El alta y asignación de cuentas gerente se hace desde un entorno administrativo de confianza; nunca se concede el rol desde la app.
+> - `user_roles_self_select` permite leer el propio rol y al administrador leer todos los roles.
 
 ### 2.2 Tabla `empleados`
 Directorio del personal para control operativo y nómina semanal.
@@ -67,9 +69,11 @@ CREATE TABLE public.empleados (
 ```
 > [!NOTE]
 > - La columna de relación con Auth es **`user_id`** (no `auth_user_id`).
-> - La columna de remuneración es **`salario BIGINT`**; no se llama `salario_base_cents` y no debe asumirse escala en centavos sin validar cómo se guardaron los datos existentes.
-> - El estado activo del empleado se gestiona mediante la columna **`activo`** en esta tabla. Si `activo = false`, el cliente bloquea el acceso del colaborador no administrativo.
-> - La columna `user_id` no cuenta con constraint `UNIQUE` en el esquema remoto verificado. Antes de resolver perfiles con `.single()`, comprobar que no existan vínculos duplicados.
+> - `salario BIGINT` es la cuota semanal en centavos de MXN. La UI usa pesos y convierte `$1,200.00` a `120000`.
+> - Todo empleado de piso puede tener un perfil sin cuenta (`user_id = NULL`). Solo administrador y gerentes autorizados inician sesión.
+> - Para que un gerente inicie sesión debe existir una cuenta Auth, una asignación `user_roles.role = 'gerente'` y un perfil activo de `empleados` vinculado por `user_id`.
+> - `activo = false` deshabilita el acceso si el empleado tiene cuenta. Para el personal sin cuenta, es una baja lógica del directorio.
+> - La columna `user_id` no tiene constraint `UNIQUE` en el esquema remoto; verificar que no haya vínculos duplicados antes de resolver perfil con `.single()`.
 
 
 ### 2.3 Tabla `historial_pagos_empleados`
@@ -84,10 +88,11 @@ CREATE TABLE public.historial_pagos_empleados (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     sync_version BIGINT NOT NULL DEFAULT 1,
     periodo_inicio DATE,
-    fecha_programada DATE
+    fecha_programada DATE,
+    registrado_por UUID
 );
 ```
-No existen en el remoto `monto_cents`, `periodo_fin`, `registrado_por` ni `idempotency_key` para esta tabla.
+`monto` almacena centavos de MXN. La app no escribe en esta tabla directamente: llama `registrar_pago_nomina`, que usa la cuota semanal del empleado, deriva su fecha programada y registra quién hizo el pago. Cada empleado admite un pago por semana, identificada por un lunes en `periodo_inicio`. Los registros anteriores a la auditoría pueden tener `registrado_por = NULL`.
 
 ### 2.4 Tabla `productos`
 Catálogo del menú con clasificación de control de existencias.
@@ -289,7 +294,7 @@ CREATE TABLE private_sync.critical_receipts (
 ### 3.1 Función de Resolución Segura de Rol `auth_role()`
 La aplicación **nunca confía en `raw_user_meta_data` del JWT** porque dicho objeto no es la fuente de verdad autoritativa para el control de acceso en la base de datos. El rol se resuelve mediante la función de base de datos `public.auth_role()`:
 
-La firma remota es `public.auth_role() RETURNS text`. La migración `20261010031023_enforce_employee_status_and_lock_legacy_visit_rpc` fijó `search_path = ''` y calificó los objetos usados. El rol `empleado` solo se devuelve cuando existe su perfil `public.empleados` vinculado por `user_id` con `activo = true`; `admin` depende de la asignación en `public.user_roles`.
+La firma remota es `public.auth_role() RETURNS text`, con `search_path` vacío. `admin` depende de `public.user_roles`; `gerente` requiere además un perfil de empleado activo vinculado por `user_id`. Los roles históricos `empleado` no reciben autorización para esta app.
 
 ### 3.2 Políticas de Row Level Security (RLS) para Autenticación y Perfiles
 Las políticas activas en la base de datos remota de Supabase garantizan que:
@@ -297,20 +302,20 @@ Las políticas activas en la base de datos remota de Supabase garantizan que:
    - Comando: `SELECT` para rol `{authenticated}`.
    - Condición (`USING`): `((user_id = (SELECT auth.uid())) OR (auth_role() = 'admin'))`.
    - Permite que cualquier usuario autenticado consulte su propio rol asignado, y que un usuario con rol `'admin'` consulte todos los roles.
-2. **`public.empleados` (`empleados_select_own` y `empleados_admin_all`):**
-   - **`empleados_select_own`:** Comando `SELECT` con condición `(auth.uid() = user_id)`. Permite al empleado leer únicamente su propia ficha operativa.
-   - **`empleados_admin_all`:** Comando `ALL` (SELECT, INSERT, UPDATE, DELETE) con condición `(auth_role() = 'admin')`. Concede acceso administrativo total a directores.
+2. **`public.empleados` (`empleados_admin_manager_manage`):** `admin` y `gerente` activo pueden leer/crear/actualizar perfiles de empleados. La app solo tiene privilegios de inserción/actualización en campos de directorio, salario, día de pago y estado; no puede cambiar `user_id`, asignar cuentas ni borrar filas. Las bajas se hacen con `activo = false`.
+3. **`public.historial_pagos_empleados`:** `admin` y `gerente` activo pueden leer todo el historial. No hay política de lectura propia para empleados ni DML directo desde el cliente. El registro se realiza únicamente mediante `registrar_pago_nomina`.
 
 ### 3.3 Reglas de Negocio para el Ciclo de Vida de Autenticación
-- **Alta de cuentas:** El alta de usuarios (empleados y administradores) se realiza **exclusivamente desde la consola/backend de Supabase** (creación de usuario en `auth.users`, inserción en `public.user_roles` y ficha en `public.empleados`). La app no dispone de pantalla de registro ni flujo `sign_up`.
-- **Deshabilitación (Soft Delete):** Para dar de baja a un empleado, se marca `activo = false` en `public.empleados`. Al autenticarse, si el empleado tiene `activo = false`, la app rechaza la sesión con error de acceso no autorizado. Para borrado definitivo, se elimina el registro (hard delete) en cascada.
+- **Alta de personal de piso:** Administrador y gerentes pueden crear perfiles desde la app. Se crean sin usuario Auth (`user_id = NULL`); no tienen login ni acceso a datos.
+- **Cuentas de app:** Solo administrador y dos gerentes autorizados tienen cuentas Auth. Los gerentes se crean en Supabase Auth y se asignan mediante `set_user_role` desde una sesión administrativa; después se vinculan a un perfil activo. La app no incluye registro.
+- **Deshabilitación:** Para dar de baja a una persona, se marca `activo = false`; la app no elimina filas de empleados ni pagos.
 - **Sin recuperación de contraseña:** La app **no incluye enlace ni flujo de "Recuperar contraseña"**. En caso de olvido, el administrador debe restablecerla directamente en Supabase.
 - **Límite de sesión (10 horas):** La sesión en la aplicación tiene una vigencia máxima estricta de 10 horas (`36,000,000 ms`). Cumplido este tiempo, la app expira la sesión local, elimina tokens y requiere credenciales nuevamente.
 - **Soporte Offline-First para la sesión:** Para operar sin conexión, la sesión validada y el perfil de usuario se persisten cifrados en almacenamiento seguro local (`EncryptedSessionManager` / `SecureAuthStore`). Si la app inicia sin conexión a internet y la última sesión guardada está dentro del margen de las 10 horas, se habilita el acceso en modo local (`isOffline = true`).
 
 ### 3.4 Roles reconocidos por la base remota
 
-La restricción actual de `public.user_roles.role` acepta `admin` y `empleado`. Los roles gerente, cajero y mesero que aparecen en propuestas de UI/reglas todavía no forman parte del contrato de base de datos; no deben usarse como valores autorizados hasta una migración acordada.
+La base permite `admin`, `gerente` y `empleado` (compatibilidad histórica). Solo `admin` y `gerente` son roles autorizados para esta app. Cajero y mesero todavía no forman parte del contrato autorizado.
 
 La matriz siguiente es una intención de producto, no una garantía de autorización desplegada. La autorización efectiva depende de las políticas RLS y RPC revisadas en Supabase.
 
@@ -322,7 +327,7 @@ La matriz siguiente es una intención de producto, no una garantía de autorizac
 | **Cobro / Transacciones** | Total | Total | Total | Denegado | Denegado |
 | **Catálogo Menú (Escritura)** | Total | Total | Denegado | Denegado | Denegado |
 | **Inventario / Ajustes** | Total | Total | Solo lectura | Solo lectura | Denegado |
-| **Nómina y Empleados** | Total | Total | Denegado | Denegado | Solo su perfil |
+| **Nómina y Empleados** | Total | Total | Denegado | Denegado | Sin acceso |
 | **Corte de Caja (Cierre)** | Total | Total | Su turno | Denegado | Denegado |
 | **Promociones** | Total | Total | Solo lectura | Solo lectura | Solo lectura |
 
@@ -346,6 +351,7 @@ Para salvaguardar la consistencia contable y evitar condiciones de carrera, las 
 | `sync_execute_v2` | `p_entity text, p_entity_id text, p_operation text, p_payload jsonb, p_key uuid, p_expected_version bigint` | Escritura sincronizada idempotente. |
 | `sync_pull` | `p_after bigint, p_watermark bigint, p_limit integer` | Lectura paginada del registro de cambios. |
 | `set_user_role` | `target_email text, target_role text` | Asignación administrativa de rol. |
+| `registrar_pago_nomina` | `p_empleado_id uuid, p_periodo_inicio date, p_fecha_pago date, p_notas text` | Registra la cuota semanal en centavos, deriva el día programado del empleado y evita duplicar el pago del periodo. Solo `admin` y `gerente` activos. |
 
 Para QR, la app envía el token en claro solo como argumento HTTPS de la RPC; la DB calcula SHA-256 y compara con `clientes.qr_token_hash`. El QR debe ser estable y no contener datos personales. Solo el cliente con `clientes.user_id` vinculado puede recibir puntos y visitas. Clientes sin registro pueden consultar promociones públicas según las políticas vigentes, pero no participan en el programa de lealtad.
 
@@ -477,7 +483,8 @@ La migración remota `20261004034839_employees_payroll_realtime.sql` registra es
 | Entidad / Campo | Tipo PostgreSQL | Tipo DTO Kotlin (`@Serializable`) | Tipo Room Entity | Tipo Dominio |
 | :--- | :--- | :--- | :--- | :--- |
 | `id` / IDs foráneos | `UUID` | `String` | `String` | `String` (o Value Object) |
-| Importes remotos | `BIGINT` | `Long` | `Long` | `Long` (unidad/escala por confirmar por campo; las columnas no usan sufijo `_cents`) |
+| `empleados.salario`, `historial_pagos_empleados.monto` | `BIGINT` | `Long` | `Long` | Centavos MXN; la UI captura/presenta pesos |
+| Otros importes remotos | `BIGINT` | `Long` | `Long` | Confirmar escala por campo antes de implementar |
 | Porcentajes / Índices | `INT` / `SMALLINT` | `Int` | `Int` | `Int` |
 | Banderas lógicas | `BOOLEAN` | `Boolean` | `Boolean` | `Boolean` |
 | Textos / Notas | `TEXT` / `VARCHAR` | `String?` | `String?` | `String?` |
@@ -489,14 +496,16 @@ La migración remota `20261004034839_employees_payroll_realtime.sql` registra es
 
 El proyecto Flutter conserva el origen de las 14 migraciones históricas bajo `C:\Users\MACHENIKE\Projects\exquisssita_manager\supabase\migrations`. Se copiaron sin cambios a este repositorio; los SHA-256 de los 14 pares coinciden. La migración Android experimental de perfiles se descartó porque referenciaba `auth_user_id`, `salario_base_cents` y `user_roles.activo`, inexistentes en el esquema real. La migración Android experimental de lealtad se retiró porque duplicaba `20261003030433_phase8_qr_loyalty_daily_visit.sql` y permitía acreditar clientes sin vínculo a Auth.
 
-La migración correctiva `20261010031023_enforce_employee_status_and_lock_legacy_visit_rpc.sql` es el único cambio nuevo: `auth_role()` ahora usa `search_path` vacío, solo reconoce a un empleado con ficha vinculada y `activo = true`, y la RPC histórica `registrar_visita_cliente(uuid)` ya no se puede ejecutar desde `anon` ni `authenticated`. La RPC de QR y el índice diario existentes se conservan.
+La migración `20261010031023_enforce_employee_status_and_lock_legacy_visit_rpc.sql` endureció `auth_role()` y revocó la RPC histórica de visitas. `20261010195445_payroll_manager_employee_access.sql` agrega `gerente`, permisos limitados por rol/columna para empleados, historial de nómina de solo lectura y la RPC de pago semanal. `20261010200756_reject_missing_roles_for_sensitive_actions.sql` hace que `auth_role()` devuelva cadena vacía cuando no hay asignación y endurece la comprobación de administrador en `set_user_role`. El rol `empleado` se conserva por compatibilidad pero no autoriza esta app.
 
 Verificación completada el 2026-10-10:
 
-1. `supabase migration list --linked`: las 15 versiones aparecen emparejadas local/remoto, desde `20261002204457` hasta `20261010031023`.
-2. `supabase db reset --local`: reconstrucción desde cero exitosa aplicando las 15 migraciones en orden.
-3. `supabase db push --linked --dry-run`: solo propuso la migración correctiva anterior; se aplicó con `supabase db push --linked` y volvió a aparecer emparejada en ambos historiales.
+1. `supabase migration list --linked`: las 17 versiones aparecen emparejadas local/remoto, desde `20261002204457` hasta `20261010200756`.
+2. `supabase db reset --local`: reconstrucción desde cero exitosa aplicando las 17 migraciones en orden.
+3. `supabase db push --linked --dry-run`: solo propuso `20261010195445_payroll_manager_employee_access.sql`; se aplicó con `supabase db push --linked` y volvió a aparecer emparejada en ambos historiales.
 4. Comprobación local/remota: mismo hash normalizado de `auth_role`; `search_path` vacío; ejecución de `registrar_visita_cliente(uuid)` denegada a `anon` y `authenticated`; ejecución de `registrar_visita_qr(text)` permitida solo a `authenticated`; la RPC exige `clientes.user_id` y el índice diario sigue instalado.
 5. `supabase db diff --linked --schema public,private_sync` solo reporta cuatro funciones ya existentes (`decrementar_stock`, `realizar_corte_caja`, `registrar_visita_cliente`, `trigger_set_updated_at`). Se compararon sus cuerpos SQL después de normalizar CRLF/LF: los cuatro hashes coinciden entre local y remoto. Es ruido de fin de línea del diff de pg-delta, no una discrepancia funcional o de migraciones.
+6. La verificación remota confirma que solo admin/gerente leen nómina; el cliente no tiene DML directo sobre historial, no puede borrar empleados ni editar `user_id`, y la RPC de nómina no es ejecutable por `anon`.
+7. La reconstrucción local y una prueba transaccional revertida confirmaron que un gerente activo ve empleados y registra `120000` centavos semanales; con `dia_pago = 3` (miércoles) y periodo iniciado lunes, la RPC deriva miércoles como fecha programada. Los salarios de prueba `100` se normalizaron a `10000` centavos; los `120000` se conservaron.
 
 Esta carpeta `docs/agents-cowork/` está ignorada por Git deliberadamente; mantener esa regla. Si se comparte el contexto con otro agente, enviar el resumen por el canal de trabajo, no cambiar el `.gitignore`.

@@ -70,13 +70,13 @@ import kotlinx.coroutines.launch
 enum class MainNavDestination(
     val title: String,
     val icon: ImageVector,
-    val requiresAdmin: Boolean = false,
+    val requiresManagerAccess: Boolean = false,
 ) {
     DASHBOARD("Dashboard", Icons.Outlined.Dashboard),
     LOYALTY("Lealtad y Clientes", Icons.Outlined.QrCodeScanner),
     TABLES("Mesas y Salón", Icons.Outlined.TableRestaurant),
     ORDERS("Órdenes y Comandas", Icons.AutoMirrored.Outlined.ReceiptLong),
-    CASH_REGISTER("Corte de Caja", Icons.Outlined.PointOfSale, requiresAdmin = true),
+    CASH_REGISTER("Corte de Caja", Icons.Outlined.PointOfSale, requiresManagerAccess = true),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -175,7 +175,10 @@ fun MainScaffold(
 
                     // Elementos de Navegación del Menú Hamburguesa
                     MainNavDestination.entries.forEach { destination ->
-                        if (destination.requiresAdmin && session?.role != UserRole.ADMIN) {
+                        if (destination.requiresManagerAccess &&
+                            session?.role != UserRole.ADMIN &&
+                            session?.role != UserRole.GERENTE
+                        ) {
                             return@forEach
                         }
 
