@@ -5,7 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.activity.enableEdgeToEdge
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.auth.AuthViewModel
 import com.mirandadevsource.exquisssitaappmanager.navigation.AppNavHost
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ExquisssitaAppManagerTheme

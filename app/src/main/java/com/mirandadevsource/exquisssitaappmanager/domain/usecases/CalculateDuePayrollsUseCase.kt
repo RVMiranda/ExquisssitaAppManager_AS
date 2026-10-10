@@ -1,1 +1,1 @@
-﻿package com.mirandadevsource.exquisssitaappmanager.domain.usecases
+package com.mirandadevsource.exquisssitaappmanager.domain.usecases

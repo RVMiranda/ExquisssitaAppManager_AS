@@ -23,6 +23,8 @@ import androidx.compose.material.icons.outlined.Construction
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PointOfSale
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.TableRestaurant
@@ -56,10 +58,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.AppUserSession
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.UserRole
 import com.mirandadevsource.exquisssitaappmanager.features.dashboard.DashboardScreen
+import com.mirandadevsource.exquisssitaappmanager.features.employees.EmployeesScreen
+import com.mirandadevsource.exquisssitaappmanager.features.employees.EmployeesViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.loyalty.LoyaltyScanScreen
+import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollScreen
+import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollViewModel
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ApricotIllusion
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.BrandyBrown
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ChocolateFondant
@@ -74,6 +81,8 @@ enum class MainNavDestination(
 ) {
     DASHBOARD("Dashboard", Icons.Outlined.Dashboard),
     LOYALTY("Lealtad y Clientes", Icons.Outlined.QrCodeScanner),
+    EMPLOYEES("Personal y Empleados", Icons.Outlined.People, requiresManagerAccess = true),
+    PAYROLL("Nómina Semanal", Icons.Outlined.Payments, requiresManagerAccess = true),
     TABLES("Mesas y Salón", Icons.Outlined.TableRestaurant),
     ORDERS("Órdenes y Comandas", Icons.AutoMirrored.Outlined.ReceiptLong),
     CASH_REGISTER("Corte de Caja", Icons.Outlined.PointOfSale, requiresManagerAccess = true),
@@ -90,6 +99,8 @@ fun MainScaffold(
     val scope = rememberCoroutineScope()
     var currentDestination by rememberSaveable { mutableStateOf(MainNavDestination.DASHBOARD) }
     var loyaltyInitialPhone by rememberSaveable { mutableStateOf<String?>(null) }
+    val employeesViewModel: EmployeesViewModel = hiltViewModel()
+    val payrollViewModel: PayrollViewModel = hiltViewModel()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -327,6 +338,12 @@ fun MainScaffold(
                                 currentDestination = MainNavDestination.DASHBOARD
                             },
                         )
+                    }
+                    MainNavDestination.EMPLOYEES -> {
+                        EmployeesScreen(viewModel = employeesViewModel)
+                    }
+                    MainNavDestination.PAYROLL -> {
+                        PayrollScreen(viewModel = payrollViewModel)
                     }
                     MainNavDestination.TABLES,
                     MainNavDestination.ORDERS,
