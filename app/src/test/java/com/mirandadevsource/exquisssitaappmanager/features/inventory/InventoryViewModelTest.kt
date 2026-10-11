@@ -102,6 +102,25 @@ class InventoryViewModelTest {
     }
 
     @Test
+    fun `formCategoryOptions contains predefined categories and appends distinct existing categories`() {
+        val state = InventoryUiState(rawProducts = sampleProducts)
+
+        val expected = listOf(
+            "Refrescos",
+            "Jugos",
+            "Aguas N",
+            "Tacos",
+            "Gorditas",
+            "Carne",
+            "Verdura",
+            "Otros",
+            "Bebidas",
+            "Postres",
+        )
+        assertEquals(expected, state.formCategoryOptions)
+    }
+
+    @Test
     fun `filtering by category returns matching products`() {
         val state = InventoryUiState(
             rawProducts = sampleProducts,

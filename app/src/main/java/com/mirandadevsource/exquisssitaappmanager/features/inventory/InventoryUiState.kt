@@ -64,6 +64,17 @@ data class InventoryUiState(
             .distinct()
             .sorted()
 
+    val formCategoryOptions: List<String>
+        get() {
+            val fromProducts = rawProducts
+                .map { it.categoria.trim() }
+                .filter { it.isNotBlank() }
+            val extra = fromProducts.filter { prodCat ->
+                DEFAULT_PRODUCT_CATEGORIES.none { it.equals(prodCat, ignoreCase = true) }
+            }.distinct().sorted()
+            return DEFAULT_PRODUCT_CATEGORIES + extra
+        }
+
     val lowStockCount: Int
         get() = rawProducts.count {
             it.activo && it.controlaInventario && (it.stockActual ?: 0) <= (it.stockMinimo ?: 0)
@@ -98,6 +109,17 @@ data class InventoryUiState(
         }
 
     companion object {
+        val DEFAULT_PRODUCT_CATEGORIES = listOf(
+            "Refrescos",
+            "Jugos",
+            "Aguas N",
+            "Tacos",
+            "Gorditas",
+            "Carne",
+            "Verdura",
+            "Otros",
+        )
+
         fun formatPrice(centavos: Long): String {
             val pesos = centavos / 100.0
             return "$${String.format(Locale.US, "%,.2f", pesos)} MXN"

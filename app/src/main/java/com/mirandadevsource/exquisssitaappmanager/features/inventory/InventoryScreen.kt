@@ -37,7 +37,11 @@ import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +56,9 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -370,7 +377,7 @@ fun InventoryScreen(
             onActivoChange = viewModel::onFormActivoChange,
             isSaving = uiState.isSavingProduct,
             errorMessage = uiState.formErrorMessage,
-            existingCategories = uiState.availableCategories,
+            categoryOptions = uiState.formCategoryOptions,
             onDismiss = { viewModel.closeProductDialog() },
             onSave = { viewModel.saveProduct() },
         )
@@ -914,6 +921,7 @@ private fun InventoryEmptyState(
 
 // --- Diálogo de Creación / Edición de Producto ---
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProductFormDialog(
     isEditing: Boolean,
@@ -931,10 +939,12 @@ private fun ProductFormDialog(
     onActivoChange: (Boolean) -> Unit,
     isSaving: Boolean,
     errorMessage: String?,
-    existingCategories: List<String>,
+    categoryOptions: List<String>,
     onDismiss: () -> Unit,
     onSave: () -> Unit,
 ) {
+    var categoryDropdownExpanded by remember { mutableStateOf(false) }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(12.dp),
@@ -995,43 +1005,54 @@ private fun ProductFormDialog(
 
                 Spacer(Modifier.height(10.dp))
 
-                // Categoría
-                OutlinedTextField(
-                    value = categoria,
-                    onValueChange = onCategoriaChange,
-                    label = { Text("Categoría (ej. Tacos, Bebidas)") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BrandyBrown,
-                        unfocusedBorderColor = ApricotIllusion,
-                    ),
+                // Categoría (Selector desplegable)
+                ExposedDropdownMenuBox(
+                    expanded = categoryDropdownExpanded,
+                    onExpandedChange = { if (!isSaving) categoryDropdownExpanded = it },
                     modifier = Modifier.fillMaxWidth(),
-                )
-
-                // Sugerencias de categorías existentes
-                if (existingCategories.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Row(
+                ) {
+                    OutlinedTextField(
+                        value = if (categoria.isBlank()) "Seleccionar categoría..." else categoria,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Categoría") },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryDropdownExpanded)
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BrandyBrown,
+                            unfocusedBorderColor = ApricotIllusion,
+                            focusedTextColor = ChocolateFondant,
+                            unfocusedTextColor = if (categoria.isBlank()) ChocolateFondant.copy(alpha = 0.5f) else ChocolateFondant,
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = categoryDropdownExpanded,
+                        onDismissRequest = { categoryDropdownExpanded = false },
+                        containerColor = VanillaCustard,
                     ) {
-                        existingCategories.take(6).forEach { cat ->
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = ApricotIllusion.copy(alpha = 0.2f),
-                                border = BorderStroke(0.5.dp, ApricotIllusion),
-                                modifier = Modifier.clickable { onCategoriaChange(cat) },
-                            ) {
-                                Text(
-                                    text = cat,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                    color = ChocolateFondant,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                )
-                            }
+                        categoryOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = option,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (option.equals(categoria, ignoreCase = true)) FontWeight.Bold else FontWeight.Normal,
+                                        color = ChocolateFondant,
+                                    )
+                                },
+                                onClick = {
+                                    onCategoriaChange(option)
+                                    categoryDropdownExpanded = false
+                                },
+                                contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
+                            )
                         }
                     }
                 }
