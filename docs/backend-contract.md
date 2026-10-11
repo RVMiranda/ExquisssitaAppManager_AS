@@ -5,7 +5,7 @@
 > Backend Remoto: Supabase / PostgreSQL (Proyecto Compartido)  
 > Regla Fundamental: Android es un cliente equivalente. No altera esquemas ni usa `service_role`.
 
-> **Estado de verificación (2026-10-10):** Los nombres de tablas y columnas en la sección 2 se contrastaron con el esquema remoto mediante Supabase CLI y con el volcado remoto del 2026-10-07 que conserva el proyecto Flutter. El contrato de roles y nómina se actualizó con `20261010195445_payroll_manager_employee_access` y `20261010200756_reject_missing_roles_for_sensitive_actions`; las 17 migraciones aparecen emparejadas local/remoto. Las cuentas de gerentes se asignarán después, cuando estén creadas.
+> **Estado de verificación (2026-10-10):** Los nombres de tablas y columnas en la sección 2 se contrastaron con el esquema remoto mediante Supabase CLI y con el volcado remoto del 2026-10-07 que conserva el proyecto Flutter. El contrato de roles y nómina se actualizó con `20261010195445_payroll_manager_employee_access` y `20261010200756_reject_missing_roles_for_sensitive_actions`. Las 20 migraciones actuales aparecen emparejadas local/remoto. Las cuentas de gerentes se asignarán después, cuando estén creadas.
 > Los fragmentos de `CREATE TABLE` de esta sección resumen columnas/tipos/defaults; no pretenden reproducir todas las PK, FK, constraints, grants o políticas. Consultar la migración remota correspondiente antes de inferir esas reglas.
 
 ---
@@ -346,7 +346,7 @@ Para salvaguardar la consistencia contable y evitar condiciones de carrera, las 
 | `registrar_visita_qr` | `p_qr_token text` | Valida el token QR y acredita visita/puntos a cliente registrado. |
 | `registrar_visita_cliente` | `p_cliente_id uuid` | RPC histórica; ejecución revocada a `PUBLIC`, `anon` y `authenticated`. No usar. |
 | `registrar_pago` | `p_orden_id uuid, p_monto bigint, p_metodo_pago text, p_idempotency_key uuid, p_asignaciones jsonb` | Pago idempotente y asignaciones de detalles. |
-| `registrar_movimiento_inventario` | `p_producto_id uuid, p_cantidad integer, p_tipo text, p_idempotency_key uuid, p_referencia_id uuid, p_notas text` | Movimiento de inventario. |
+| `registrar_movimiento_inventario` | Firma heredada de seis argumentos (`p_producto_id`, `p_cantidad`, `p_tipo`, `p_idempotency_key`, `p_referencia_id`, `p_notas`) y sobrecarga nueva de siete que añade `p_expected_version bigint` obligatorio | Movimiento idempotente; los ajustes manuales deben enviar la versión observada. La heredada se conserva para compatibilidad. Solo `authenticated`; admin/gerente pasan la autorización interna. `anon` no tiene permiso. |
 | `realizar_corte_caja_seguro` | `p_fecha date` | Corte de caja diario seguro. |
 | `sync_execute_v2` | `p_entity text, p_entity_id text, p_operation text, p_payload jsonb, p_key uuid, p_expected_version bigint` | Escritura sincronizada idempotente. |
 | `sync_pull` | `p_after bigint, p_watermark bigint, p_limit integer` | Lectura paginada del registro de cambios. |
@@ -498,14 +498,19 @@ El proyecto Flutter conserva el origen de las 14 migraciones históricas bajo `C
 
 La migración `20261010031023_enforce_employee_status_and_lock_legacy_visit_rpc.sql` endureció `auth_role()` y revocó la RPC histórica de visitas. `20261010195445_payroll_manager_employee_access.sql` agrega `gerente`, permisos limitados por rol/columna para empleados, historial de nómina de solo lectura y la RPC de pago semanal. `20261010200756_reject_missing_roles_for_sensitive_actions.sql` hace que `auth_role()` devuelva cadena vacía cuando no hay asignación y endurece la comprobación de administrador en `set_user_role`. El rol `empleado` se conserva por compatibilidad pero no autoriza esta app.
 
-Verificación completada el 2026-10-10:
+Verificación completada el 2026-10-10 (actualización tras alineación de inventario):
 
-1. `supabase migration list --linked`: las 17 versiones aparecen emparejadas local/remoto, desde `20261002204457` hasta `20261010200756`.
+1. `supabase migration list --linked`: las 20 versiones aparecen emparejadas local/remoto, desde `20261002204457` hasta `20261010223749`.
 2. `supabase db reset --local`: reconstrucción desde cero exitosa aplicando las 17 migraciones en orden.
 3. `supabase db push --linked --dry-run`: solo propuso `20261010195445_payroll_manager_employee_access.sql`; se aplicó con `supabase db push --linked` y volvió a aparecer emparejada en ambos historiales.
 4. Comprobación local/remota: mismo hash normalizado de `auth_role`; `search_path` vacío; ejecución de `registrar_visita_cliente(uuid)` denegada a `anon` y `authenticated`; ejecución de `registrar_visita_qr(text)` permitida solo a `authenticated`; la RPC exige `clientes.user_id` y el índice diario sigue instalado.
 5. `supabase db diff --linked --schema public,private_sync` solo reporta cuatro funciones ya existentes (`decrementar_stock`, `realizar_corte_caja`, `registrar_visita_cliente`, `trigger_set_updated_at`). Se compararon sus cuerpos SQL después de normalizar CRLF/LF: los cuatro hashes coinciden entre local y remoto. Es ruido de fin de línea del diff de pg-delta, no una discrepancia funcional o de migraciones.
 6. La verificación remota confirma que solo admin/gerente leen nómina; el cliente no tiene DML directo sobre historial, no puede borrar empleados ni editar `user_id`, y la RPC de nómina no es ejecutable por `anon`.
 7. La reconstrucción local y una prueba transaccional revertida confirmaron que un gerente activo ve empleados y registra `120000` centavos semanales; con `dia_pago = 3` (miércoles) y periodo iniciado lunes, la RPC deriva miércoles como fecha programada. Los salarios de prueba `100` se normalizaron a `10000` centavos; los `120000` se conservaron.
+8. `20261010222310_align_inventory_manager_permissions.sql` alinea lectura de productos/movimientos y autorización de `private_sync.inventory_command` con `admin`/`gerente`; conserva ajuste solo para `admin`, revoca DML directo de movimientos y mantiene denegado el acceso `anon`.
+9. `20261010223202_expose_inventory_adjustment_version.sql` agrega la RPC de siete argumentos para pasar `p_expected_version`. `20261010223749_require_expected_version_for_adjustment_rpc.sql` hace obligatorio ese último argumento, evitando ambigüedad con la firma heredada. En remoto, CLI verificó ejecución de ambas firmas por `authenticated`, denegación de la firma nueva a `anon` y la lista local/remota sincronizada.
+10. El chequeo remoto posterior confirmó `authenticated` con SELECT a productos/movimientos, sin INSERT directo a movimientos; `anon` sin SELECT de productos ni ejecución de la RPC de inventario. El precio remoto `productos.precio` es `BIGINT` y la app lo modela como centavos, conservando precisión entera.
+11. La auditoría remota de `productos.activo` confirmó que desactivar un producto no pone `stock_actual` en cero: solo existen triggers de `updated_at`, captura de cambios y `sync_version`. La RPC actual de inventario no filtra por `activo`, por lo que admite movimientos sobre productos inactivos si cumplen las demás validaciones. No se debe resetear stock sin movimiento de kardex; la regla para inactivos requiere decisión y posible migración aparte.
+12. La capa Android de inventario subió Room a versión 3 con catálogo, caché append-only de movimientos y outbox local de comandos vinculada al usuario que la creó. Las ventas siguen reservadas al flujo de Órdenes; los movimientos pendientes no modifican el stock confirmado local.
 
 Esta carpeta `docs/agents-cowork/` está ignorada por Git deliberadamente; mantener esa regla. Si se comparte el contexto con otro agente, enviar el resumen por el canal de trabajo, no cambiar el `.gitignore`.

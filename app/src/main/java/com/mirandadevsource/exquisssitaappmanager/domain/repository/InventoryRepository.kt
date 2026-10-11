@@ -1,1 +1,27 @@
-﻿package com.mirandadevsource.exquisssitaappmanager.domain.repository
+package com.mirandadevsource.exquisssitaappmanager.domain.repository
+
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.InventoryCommand
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.RegisterInventoryMovement
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.StockMovement
+import kotlinx.coroutines.flow.Flow
+
+interface InventoryRepository {
+    suspend fun getProducts(includeInactive: Boolean = false): Result<List<Product>>
+
+    suspend fun getMovements(
+        productId: String,
+        offset: Int = 0,
+        limit: Int = DEFAULT_MOVEMENT_PAGE_SIZE,
+    ): Result<List<StockMovement>>
+
+    suspend fun registerMovement(request: RegisterInventoryMovement): Result<InventoryCommand>
+
+    suspend fun syncPendingCommands(): Result<Unit>
+
+    fun observeInventoryCommands(): Flow<List<InventoryCommand>>
+
+    companion object {
+        const val DEFAULT_MOVEMENT_PAGE_SIZE = 50
+    }
+}

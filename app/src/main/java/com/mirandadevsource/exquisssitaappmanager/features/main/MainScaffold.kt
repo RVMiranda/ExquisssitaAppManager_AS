@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Construction
 import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Payments
@@ -64,6 +65,8 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.UserRole
 import com.mirandadevsource.exquisssitaappmanager.features.dashboard.DashboardScreen
 import com.mirandadevsource.exquisssitaappmanager.features.employees.EmployeesScreen
 import com.mirandadevsource.exquisssitaappmanager.features.employees.EmployeesViewModel
+import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryScreen
+import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.loyalty.LoyaltyScanScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollViewModel
@@ -81,6 +84,7 @@ enum class MainNavDestination(
 ) {
     DASHBOARD("Dashboard", Icons.Outlined.Dashboard),
     LOYALTY("Lealtad y Clientes", Icons.Outlined.QrCodeScanner),
+    INVENTORY("Menú e Inventario", Icons.Outlined.Inventory2),
     EMPLOYEES("Personal y Empleados", Icons.Outlined.People, requiresManagerAccess = true),
     PAYROLL("Nómina Semanal", Icons.Outlined.Payments, requiresManagerAccess = true),
     TABLES("Mesas y Salón", Icons.Outlined.TableRestaurant),
@@ -101,6 +105,7 @@ fun MainScaffold(
     var loyaltyInitialPhone by rememberSaveable { mutableStateOf<String?>(null) }
     val employeesViewModel: EmployeesViewModel = hiltViewModel()
     val payrollViewModel: PayrollViewModel = hiltViewModel()
+    val inventoryViewModel: InventoryViewModel = hiltViewModel()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -338,6 +343,9 @@ fun MainScaffold(
                                 currentDestination = MainNavDestination.DASHBOARD
                             },
                         )
+                    }
+                    MainNavDestination.INVENTORY -> {
+                        InventoryScreen(viewModel = inventoryViewModel)
                     }
                     MainNavDestination.EMPLOYEES -> {
                         EmployeesScreen(viewModel = employeesViewModel)

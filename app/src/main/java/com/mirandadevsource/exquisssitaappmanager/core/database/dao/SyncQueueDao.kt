@@ -1,1 +1,1 @@
-﻿package com.mirandadevsource.exquisssitaappmanager.core.database.dao
+package com.mirandadevsource.exquisssitaappmanager.core.database.dao
