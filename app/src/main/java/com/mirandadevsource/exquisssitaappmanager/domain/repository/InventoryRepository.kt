@@ -9,6 +9,24 @@ import kotlinx.coroutines.flow.Flow
 interface InventoryRepository {
     suspend fun getProducts(includeInactive: Boolean = false): Result<List<Product>>
 
+    suspend fun createProduct(
+        nombre: String,
+        precioCentavos: Long,
+        categoria: String,
+        controlaInventario: Boolean,
+        stockMinimo: Int,
+    ): Result<Product>
+
+    suspend fun updateProduct(
+        id: String,
+        nombre: String,
+        precioCentavos: Long,
+        categoria: String,
+        controlaInventario: Boolean,
+        stockMinimo: Int,
+        activo: Boolean,
+    ): Result<Product>
+
     suspend fun getMovements(
         productId: String,
         offset: Int = 0,

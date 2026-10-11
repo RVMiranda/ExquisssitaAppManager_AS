@@ -17,3 +17,25 @@ data class ProductDto(
     @SerialName("updated_at") val updatedAt: String,
     @SerialName("sync_version") val syncVersion: Long,
 )
+
+@Serializable
+data class CreateProductRequestDto(
+    val id: String,
+    val nombre: String,
+    val precio: Long,
+    val categoria: String,
+    @SerialName("controla_inventario") val controlaInventario: Boolean,
+    @SerialName("stock_minimo") val stockMinimo: Int? = 0,
+    val activo: Boolean = true,
+)
+
+@Serializable
+data class UpdateProductRequestDto(
+    val nombre: String,
+    val precio: Long,
+    val categoria: String,
+    @SerialName("controla_inventario") val controlaInventario: Boolean,
+    @SerialName("stock_minimo") val stockMinimo: Int? = 0,
+    val activo: Boolean,
+)
+

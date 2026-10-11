@@ -15,5 +15,8 @@ interface ProductDao {
     suspend fun getById(id: String): ProductEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(product: ProductEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(products: List<ProductEntity>)
 }

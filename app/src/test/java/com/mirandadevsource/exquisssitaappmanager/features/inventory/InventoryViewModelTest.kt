@@ -5,11 +5,15 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.RegisterInventoryMovement
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.StockMovement
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.InventoryRepository
+import com.mirandadevsource.exquisssitaappmanager.domain.usecases.inventory.CreateProductUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.inventory.GetProductsUseCase
+import com.mirandadevsource.exquisssitaappmanager.domain.usecases.inventory.UpdateProductUseCase
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class InventoryViewModelTest {
@@ -77,6 +81,18 @@ class InventoryViewModelTest {
     }
 
     @Test
+    fun `parsePesosToCentavos parses user input with exact centavos without floating drift`() {
+        assertEquals(3500L, InventoryUiState.parsePesosToCentavos("35"))
+        assertEquals(3500L, InventoryUiState.parsePesosToCentavos("35.00"))
+        assertEquals(3550L, InventoryUiState.parsePesosToCentavos("35.5"))
+        assertEquals(120075L, InventoryUiState.parsePesosToCentavos("1,200.75"))
+        assertEquals(120075L, InventoryUiState.parsePesosToCentavos("$1200.75"))
+        assertNull(InventoryUiState.parsePesosToCentavos(""))
+        assertNull(InventoryUiState.parsePesosToCentavos("-10"))
+        assertNull(InventoryUiState.parsePesosToCentavos("abc"))
+    }
+
+    @Test
     fun `UiState computes low stock and categories correctly`() {
         val state = InventoryUiState(rawProducts = sampleProducts)
 
@@ -139,7 +155,7 @@ class InventoryViewModelTest {
 
     @Test
     fun `GetProductsUseCase delegates to repository properly`() = runBlocking {
-        val fakeRepo = FakeInventoryRepository(sampleProducts)
+        val fakeRepo = FakeInventoryRepository(sampleProducts.toMutableList())
         val useCase = GetProductsUseCase(fakeRepo)
 
         val result = useCase(includeInactive = true)
@@ -148,11 +164,98 @@ class InventoryViewModelTest {
         assertEquals(4, products.size)
     }
 
+    @Test
+    fun `CreateProductUseCase creates product successfully`() = runBlocking {
+        val list = sampleProducts.toMutableList()
+        val fakeRepo = FakeInventoryRepository(list)
+        val useCase = CreateProductUseCase(fakeRepo)
+
+        val created = useCase(
+            nombre = "Gringas de Pastor",
+            precioCentavos = 4500,
+            categoria = "Tacos",
+            controlaInventario = true,
+            stockMinimo = 10,
+        ).getOrThrow()
+
+        assertNotNull(created.id)
+        assertEquals("Gringas de Pastor", created.nombre)
+        assertEquals(4500L, created.precioCentavos)
+        assertEquals(5, list.size)
+    }
+
+    @Test
+    fun `UpdateProductUseCase modifies product properly`() = runBlocking {
+        val list = sampleProducts.toMutableList()
+        val fakeRepo = FakeInventoryRepository(list)
+        val useCase = UpdateProductUseCase(fakeRepo)
+
+        val updated = useCase(
+            id = "p1",
+            nombre = "Agua Melon Especial",
+            precioCentavos = 4000,
+            categoria = "Aguas N",
+            controlaInventario = false,
+            stockMinimo = 0,
+            activo = true,
+        ).getOrThrow()
+
+        assertEquals("Agua Melon Especial", updated.nombre)
+        assertEquals(4000L, updated.precioCentavos)
+    }
+
     private class FakeInventoryRepository(
-        private val products: List<Product>,
+        private val products: MutableList<Product>,
     ) : InventoryRepository {
         override suspend fun getProducts(includeInactive: Boolean): Result<List<Product>> {
             return Result.success(if (includeInactive) products else products.filter { it.activo })
+        }
+
+        override suspend fun createProduct(
+            nombre: String,
+            precioCentavos: Long,
+            categoria: String,
+            controlaInventario: Boolean,
+            stockMinimo: Int,
+        ): Result<Product> {
+            val p = Product(
+                id = "created-${products.size + 1}",
+                nombre = nombre,
+                precioCentavos = precioCentavos,
+                categoria = categoria,
+                controlaInventario = controlaInventario,
+                stockActual = 0,
+                stockMinimo = stockMinimo,
+                activo = true,
+                createdAt = "2026-10-11T00:00:00Z",
+                updatedAt = "2026-10-11T00:00:00Z",
+                syncVersion = 1,
+            )
+            products.add(p)
+            return Result.success(p)
+        }
+
+        override suspend fun updateProduct(
+            id: String,
+            nombre: String,
+            precioCentavos: Long,
+            categoria: String,
+            controlaInventario: Boolean,
+            stockMinimo: Int,
+            activo: Boolean,
+        ): Result<Product> {
+            val idx = products.indexOfFirst { it.id == id }
+            if (idx == -1) return Result.failure(NoSuchElementException())
+            val updated = products[idx].copy(
+                nombre = nombre,
+                precioCentavos = precioCentavos,
+                categoria = categoria,
+                controlaInventario = controlaInventario,
+                stockMinimo = stockMinimo,
+                activo = activo,
+            )
+            products[idx] = updated
+            return Result.success(updated)
         }
 
         override suspend fun getMovements(

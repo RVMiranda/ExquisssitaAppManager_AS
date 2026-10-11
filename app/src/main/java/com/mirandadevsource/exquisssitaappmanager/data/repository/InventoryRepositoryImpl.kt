@@ -4,11 +4,13 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.dao.InventoryCom
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.ProductDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.StockMovementDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.InventoryCommandEntity
+import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.CreateProductRequestDto
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.InventoryRpcResponseDto
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.InventoryRpcSixParams
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.InventoryRpcVersionedParams
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.ProductDto
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.StockMovementDto
+import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.UpdateProductRequestDto
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.data.mappers.toDomain
 import com.mirandadevsource.exquisssitaappmanager.data.mappers.toEntity
@@ -70,6 +72,90 @@ class InventoryRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun createProduct(
+        nombre: String,
+        precioCentavos: Long,
+        categoria: String,
+        controlaInventario: Boolean,
+        stockMinimo: Int,
+    ): Result<Product> {
+        if (nombre.isBlank()) return Result.failure(IllegalArgumentException("El nombre del producto es obligatorio."))
+        if (precioCentavos < 0) return Result.failure(IllegalArgumentException("El precio no puede ser negativo."))
+        if (categoria.isBlank()) return Result.failure(IllegalArgumentException("La categoría es obligatoria."))
+        if (controlaInventario && stockMinimo < 0) return Result.failure(IllegalArgumentException("El stock mínimo no puede ser negativo."))
+
+        if (!networkMonitor.isOnline()) {
+            return Result.failure(IllegalStateException("Crear productos requiere conexión para sincronizar con el catálogo."))
+        }
+
+        return try {
+            val newId = java.util.UUID.randomUUID().toString()
+            val request = CreateProductRequestDto(
+                id = newId,
+                nombre = nombre.trim(),
+                precio = precioCentavos,
+                categoria = categoria.trim(),
+                controlaInventario = controlaInventario,
+                stockMinimo = if (controlaInventario) stockMinimo else 0,
+                activo = true,
+            )
+            val remote = supabase.from(PRODUCTS_TABLE).insert(request) {
+                select(columns = PRODUCT_COLUMNS)
+            }.decodeSingle<ProductDto>()
+
+            val entity = remote.toEntity()
+            productDao.upsert(entity)
+            Result.success(entity.toDomain())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Result.failure(failure)
+        }
+    }
+
+    override suspend fun updateProduct(
+        id: String,
+        nombre: String,
+        precioCentavos: Long,
+        categoria: String,
+        controlaInventario: Boolean,
+        stockMinimo: Int,
+        activo: Boolean,
+    ): Result<Product> {
+        if (id.isBlank()) return Result.failure(IllegalArgumentException("El identificador del producto es obligatorio."))
+        if (nombre.isBlank()) return Result.failure(IllegalArgumentException("El nombre del producto es obligatorio."))
+        if (precioCentavos < 0) return Result.failure(IllegalArgumentException("El precio no puede ser negativo."))
+        if (categoria.isBlank()) return Result.failure(IllegalArgumentException("La categoría es obligatoria."))
+        if (controlaInventario && stockMinimo < 0) return Result.failure(IllegalArgumentException("El stock mínimo no puede ser negativo."))
+
+        if (!networkMonitor.isOnline()) {
+            return Result.failure(IllegalStateException("Editar productos requiere conexión para sincronizar con el catálogo."))
+        }
+
+        return try {
+            val request = UpdateProductRequestDto(
+                nombre = nombre.trim(),
+                precio = precioCentavos,
+                categoria = categoria.trim(),
+                controlaInventario = controlaInventario,
+                stockMinimo = if (controlaInventario) stockMinimo else 0,
+                activo = activo,
+            )
+            val remote = supabase.from(PRODUCTS_TABLE).update(request) {
+                filter { eq("id", id.trim()) }
+                select(columns = PRODUCT_COLUMNS)
+            }.decodeSingle<ProductDto>()
+
+            val entity = remote.toEntity()
+            productDao.upsert(entity)
+            Result.success(entity.toDomain())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Result.failure(failure)
+        }
+    }
+
     override suspend fun getMovements(
         productId: String,
         offset: Int,
@@ -93,7 +179,7 @@ class InventoryRepositoryImpl @Inject constructor(
                 }
                 .decodeList<StockMovementDto>()
             stockMovementDao.upsertAll(remoteRows.map { it.toEntity() })
-            readMovementCache(productId, offset, limit)
+            Result.success(remoteRows.map { it.toEntity().toDomain() })
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
