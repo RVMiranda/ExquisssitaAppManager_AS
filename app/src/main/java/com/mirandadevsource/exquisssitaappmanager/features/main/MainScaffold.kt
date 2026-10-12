@@ -70,6 +70,8 @@ import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryVi
 import com.mirandadevsource.exquisssitaappmanager.features.loyalty.LoyaltyScanScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollViewModel
+import com.mirandadevsource.exquisssitaappmanager.features.orders.OrderViewModel
+import com.mirandadevsource.exquisssitaappmanager.features.orders.OrdersScreen
 import com.mirandadevsource.exquisssitaappmanager.features.tables.TablesScreen
 import com.mirandadevsource.exquisssitaappmanager.features.tables.TablesViewModel
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ApricotIllusion
@@ -109,6 +111,7 @@ fun MainScaffold(
     val payrollViewModel: PayrollViewModel = hiltViewModel()
     val inventoryViewModel: InventoryViewModel = hiltViewModel()
     val tablesViewModel: TablesViewModel = hiltViewModel()
+    val ordersViewModel: OrderViewModel = hiltViewModel()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -357,9 +360,26 @@ fun MainScaffold(
                         PayrollScreen(viewModel = payrollViewModel)
                     }
                     MainNavDestination.TABLES -> {
-                        TablesScreen(viewModel = tablesViewModel)
+                        TablesScreen(
+                            viewModel = tablesViewModel,
+                            onOpenOrderForTable = { tableId ->
+                                ordersViewModel.openNewOrderDialog(initialTableId = tableId)
+                                currentDestination = MainNavDestination.ORDERS
+                            },
+                            onViewOrder = { orderId ->
+                                ordersViewModel.selectOrder(orderId)
+                                currentDestination = MainNavDestination.ORDERS
+                            },
+                        )
                     }
-                    MainNavDestination.ORDERS,
+                    MainNavDestination.ORDERS -> {
+                        OrdersScreen(
+                            viewModel = ordersViewModel,
+                            onNavigateToTables = {
+                                currentDestination = MainNavDestination.TABLES
+                            },
+                        )
+                    }
                     MainNavDestination.CASH_REGISTER -> {
                         ModulePlaceholderScreen(title = currentDestination.title)
                     }

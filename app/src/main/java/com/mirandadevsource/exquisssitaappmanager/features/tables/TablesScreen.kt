@@ -79,6 +79,8 @@ private val AvailableGreenBorder = Color(0xFFA5D6A7)
 @Composable
 fun TablesScreen(
     viewModel: TablesViewModel,
+    onOpenOrderForTable: ((tableId: String) -> Unit)? = null,
+    onViewOrder: ((orderId: String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -230,6 +232,8 @@ fun TablesScreen(
             isTogglingReservation = uiState.isTogglingReservation,
             actionError = uiState.detailActionError,
             onToggleReservation = { viewModel.toggleReservation(uiState.selectedTable!!) },
+            onOpenOrder = onOpenOrderForTable,
+            onViewOrder = onViewOrder,
             onDismiss = viewModel::dismissTableDetailDialog,
         )
     }
@@ -799,6 +803,8 @@ private fun TableDetailDialog(
     isTogglingReservation: Boolean,
     actionError: String?,
     onToggleReservation: () -> Unit,
+    onOpenOrder: ((String) -> Unit)? = null,
+    onViewOrder: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss) {
@@ -994,16 +1000,21 @@ private fun TableDetailDialog(
                                     shape = RoundedCornerShape(8.dp),
                                     color = VanillaCustard,
                                     border = BorderStroke(0.5.dp, ApricotIllusion),
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(enabled = onViewOrder != null) {
+                                            onDismiss()
+                                            onViewOrder?.invoke(order.id)
+                                        },
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(10.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Column {
+                                        Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = "Comanda #${order.id.take(8)}",
+                                                text = "Comanda #${order.id.take(8).uppercase()}",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = ChocolateFondant,
@@ -1043,11 +1054,31 @@ private fun TableDetailDialog(
 
                 Spacer(Modifier.height(18.dp))
 
-                // Botón Cerrar
+                // Acciones
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (onOpenOrder != null) {
+                        Button(
+                            onClick = {
+                                onDismiss()
+                                onOpenOrder(table.id)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = BrandyBrown,
+                                contentColor = Color.White,
+                            ),
+                            elevation = ButtonDefaults.buttonElevation(0.dp),
+                        ) {
+                            Text("Abrir Comanda")
+                        }
+                    } else {
+                        Spacer(Modifier.width(1.dp))
+                    }
+
                     Button(
                         onClick = onDismiss,
                         shape = RoundedCornerShape(8.dp),
