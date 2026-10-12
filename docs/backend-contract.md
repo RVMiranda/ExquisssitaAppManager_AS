@@ -5,7 +5,7 @@
 > Backend Remoto: Supabase / PostgreSQL (Proyecto Compartido)  
 > Regla Fundamental: Android es un cliente equivalente. No altera esquemas ni usa `service_role`.
 
-> **Estado de verificación (2026-10-10):** Los nombres de tablas y columnas en la sección 2 se contrastaron con el esquema remoto mediante Supabase CLI y con el volcado remoto del 2026-10-07 que conserva el proyecto Flutter. El contrato de roles y nómina se actualizó con `20261010195445_payroll_manager_employee_access` y `20261010200756_reject_missing_roles_for_sensitive_actions`. Las 20 migraciones actuales aparecen emparejadas local/remoto. Las cuentas de gerentes se asignarán después, cuando estén creadas.
+> **Estado de verificación (2026-10-12):** Supabase CLI `2.120.0` confirmó que las 22 migraciones locales y remotas están emparejadas, hasta `20261012024548_fix_orders_staff_access_and_multiple_open_orders.sql`. La migración corrigió acceso de mesas/órdenes/pagos para `admin` y `gerente` activo, revocó acceso anónimo y DML directo, y retiró el índice que impedía varias órdenes abiertas por mesa. El diff global `db diff --linked` sigue pendiente porque Docker Desktop no tiene disponible el motor Linux. Las cuentas gerente se asignarán después, cuando estén creadas.
 > Los fragmentos de `CREATE TABLE` de esta sección resumen columnas/tipos/defaults; no pretenden reproducir todas las PK, FK, constraints, grants o políticas. Consultar la migración remota correspondiente antes de inferir esas reglas.
 
 ---
@@ -332,6 +332,20 @@ La matriz siguiente es una intención de producto, no una garantía de autorizac
 | **Corte de Caja (Cierre)** | Total | Total | Su turno | Denegado | Denegado |
 | **Promociones** | Total | Total | Solo lectura | Solo lectura | Solo lectura |
 
+### 3.5 Auditoría remota dirigida de Mesas, Órdenes y Pagos (2026-10-12)
+
+La auditoría previa detectó los hallazgos siguientes; se resolvieron en la migración `20261012024548_fix_orders_staff_access_and_multiple_open_orders.sql` y se verificaron en el remoto con `supabase db query --linked`:
+
+- El índice parcial `ordenes_una_abierta_por_mesa` limitaba a una orden abierta por mesa. Fue eliminado; los UUID de orden y recibos idempotentes distinguen comandas diferentes y reintentos de la misma intención.
+- `public.ordenes.mesa_id` admite `NULL`, compatible con pedidos para llevar sin mesa.
+- Las políticas staff ahora son `TO authenticated` y permiten lectura a `admin`/`gerente` activo. Las políticas de lectura propia para clientes siguen limitadas a usuarios autenticados.
+- `mesas_public_select` y las demás políticas de escritura directa fueron retiradas de las tablas afectadas. Se revocaron los privilegios de `PUBLIC`, `anon` y `authenticated`, y se concedió únicamente `SELECT` a `authenticated`; las mutaciones deben pasar por RPC seguras.
+- Las guardas de `registrar_pago`, `sync_execute`, `sync_execute_v2`, `sync_pull` y `private_sync.inventory_command` aceptan `admin` y `gerente` activo. Se mantuvieron validaciones específicas de administrador para nómina, empleados, promociones, ajustes y borrados restringidos.
+- La RPC remota `registrar_pago` ya permite contribuciones iguales/personalizadas y pagos parciales de una misma unidad en transacciones distintas (ejemplo del cuerpo remoto: 40 + 60 centavos para una unidad de 100). Es idempotente mediante `private_sync.critical_receipts`, pero actualmente no registra movimientos de inventario. `pago_detalles.cantidad` puede repetirse entre transacciones y no representa unidades de stock consumidas.
+- Al volver a ejecutar los asesores persisten avisos de RPC `SECURITY DEFINER` intencionales accesibles a `authenticated` y de políticas SELECT múltiples en órdenes/detalles, donde coexisten la lectura staff y el ownership del cliente. Las funciones inspeccionadas usan `search_path` vacío y checks de rol; las políticas usan `(SELECT auth.uid())` para evitar evaluación por fila. Revisar los avisos por función/ACL, no quitando indiscriminadamente el acceso necesario.
+
+Verificación posterior: el CLI confirmó el índice ausente, RLS habilitado en las cinco tablas, ningún `SELECT` anónimo, `SELECT` autenticado disponible, `INSERT` directo denegado y las cuatro guardas RPC enumeradas con `gerente`. El historial local/remoto está emparejado en 22 migraciones. Esto no reemplaza el diff completo del esquema: `supabase db diff --linked --schema public,private_sync` sigue pendiente porque el entorno no encontró `dockerDesktopLinuxEngine`.
+
 ---
 
 ## 4. Funciones RPC Críticas y Atomicidad
@@ -515,3 +529,13 @@ Verificación completada el 2026-10-10 (actualización tras alineación de inven
 12. La capa Android de inventario subió Room a versión 3 con catálogo, caché append-only de movimientos y outbox local de comandos vinculada al usuario que la creó. Las ventas siguen reservadas al flujo de Órdenes; los movimientos pendientes no modifican el stock confirmado local.
 
 Esta carpeta `docs/agents-cowork/` está ignorada por Git deliberadamente; mantener esa regla. Si se comparte el contexto con otro agente, enviar el resumen por el canal de trabajo, no cambiar el `.gitignore`.
+
+## 8. Actualización — paquete de Mesas, Órdenes y Pagos (2026-10-12)
+
+La migración `20261012025547_add_atomic_payment_stock_allocations.sql` está aplicada en remoto. Agrega `public.pago_detalle_stock`, separado de `pago_detalles`, con RLS y lectura para `admin`/`gerente`; extiende `registrar_pago` para confirmar cada reducción de stock en la misma transacción que el pago; y agrega `cancelar_detalle_orden(uuid,uuid)`, idempotente y limitada a partidas abiertas sin pagos. `cantidad_stock` es entero, no puede exceder las unidades asignadas y el acumulado por detalle no supera la cantidad pedida. Pago y movimiento se revierten juntos ante error.
+
+La migración `20261012031223_derive_table_occupancy.sql` también está aplicada. Normaliza el marcador histórico `Ocupada` a `Libre` e impide volver a persistirlo; Android deriva ocupación desde órdenes abiertas. Consulta remota confirmó constraint instalada, cero mesas `Ocupada`, RLS activa en `pago_detalle_stock`, y permisos de ejecución authenticated para ambas RPC (cada función valida internamente admin/gerente). `supabase migration list --linked` muestra 24 migraciones locales/remotas emparejadas hasta `20261012031223`.
+
+Android agrega Room v4 con caché de mesas/órdenes/detalles/pagos/outbox. Los repositorios observan Room, refrescan con PostgREST, guardan intención y cambio optimista en una transacción Room, y reintentan el mismo JSON y clave por actor. Los pagos offline son intenciones pendientes; solo aparecen confirmados tras respuesta remota y reconciliación. No hay descuento local de stock no confirmado. Orden pagada o partida con pago no se puede cancelar desde sincronización genérica; reembolsos esperan definición de negocio.
+
+Validación pendiente: compilación y ejecución Android, pruebas locales de Supabase con Docker Linux, pruebas de concurrencia/RLS con sesiones reales de admin/gerente y `db diff` global. Gradle no pudo compilar Kotlin porque el entorno no estableció su conexión loopback. No se agregó WorkManager; el reintento se activa mediante `refresh*`/`syncPending*` cuando la app vuelve a consultar o sincronizar.

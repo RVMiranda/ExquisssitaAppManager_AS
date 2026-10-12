@@ -10,6 +10,11 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.dao.InventoryCom
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.PayrollDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.ProductDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.StockMovementDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.TableDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderDetailDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderCommandDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.TransactionDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -26,6 +31,7 @@ object DatabaseModule {
         Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
             .addMigrations(MIGRATION_1_2)
             .addMigrations(MIGRATION_2_3)
+            .addMigrations(MIGRATION_3_4)
             .build()
 
     @Provides
@@ -42,6 +48,21 @@ object DatabaseModule {
 
     @Provides
     fun provideInventoryCommandDao(database: AppDatabase): InventoryCommandDao = database.inventoryCommandDao()
+
+    @Provides
+    fun provideTableDao(database: AppDatabase): TableDao = database.tableDao()
+
+    @Provides
+    fun provideOrderDao(database: AppDatabase): OrderDao = database.orderDao()
+
+    @Provides
+    fun provideOrderDetailDao(database: AppDatabase): OrderDetailDao = database.orderDetailDao()
+
+    @Provides
+    fun provideOrderCommandDao(database: AppDatabase): OrderCommandDao = database.orderCommandDao()
+
+    @Provides
+    fun provideTransactionDao(database: AppDatabase): TransactionDao = database.transactionDao()
 
     private const val DATABASE_NAME = "exquisssita_manager.db"
 
@@ -118,6 +139,40 @@ object DatabaseModule {
                 "CREATE INDEX IF NOT EXISTS `index_inventory_command_outbox_actorUserId_status_createdAtMillis` " +
                     "ON `inventory_command_outbox` (`actorUserId`, `status`, `createdAtMillis`)" ,
             )
+        }
+    }
+
+    private val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `table_cache` (`id` TEXT NOT NULL, `numeroMesa` TEXT NOT NULL, `estado` TEXT NOT NULL, `createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, `syncVersion` INTEGER NOT NULL, `syncState` TEXT NOT NULL, `cachedAtMillis` INTEGER NOT NULL, `actorUserId` TEXT, PRIMARY KEY(`id`))""")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_table_cache_numeroMesa` ON `table_cache` (`numeroMesa`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_table_cache_estado` ON `table_cache` (`estado`)")
+
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `order_cache` (`id` TEXT NOT NULL, `mesaId` TEXT, `clienteId` TEXT, `tipoServicio` TEXT NOT NULL, `estado` TEXT NOT NULL, `fechaApertura` TEXT NOT NULL, `fechaCierre` TEXT, `notas` TEXT, `createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, `syncVersion` INTEGER NOT NULL, `actorUserId` TEXT NOT NULL, `syncState` TEXT NOT NULL, `cachedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`id`))""")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_cache_mesaId_estado` ON `order_cache` (`mesaId`, `estado`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_cache_estado` ON `order_cache` (`estado`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_cache_actorUserId` ON `order_cache` (`actorUserId`)")
+
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `order_detail_cache` (`id` TEXT NOT NULL, `ordenId` TEXT NOT NULL, `productoId` TEXT NOT NULL, `cantidad` INTEGER NOT NULL, `precioUnitarioCentavos` INTEGER NOT NULL, `estadoPago` TEXT NOT NULL, `notas` TEXT, `createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, `syncVersion` INTEGER NOT NULL, `syncState` TEXT NOT NULL, `cachedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`id`))""")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_detail_cache_ordenId` ON `order_detail_cache` (`ordenId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_detail_cache_productoId` ON `order_detail_cache` (`productoId`)")
+
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `transaction_cache` (`id` TEXT NOT NULL, `ordenId` TEXT NOT NULL, `montoCentavos` INTEGER NOT NULL, `metodoPago` TEXT NOT NULL, `fecha` TEXT NOT NULL, `idempotencyKey` TEXT NOT NULL, `createdAt` TEXT NOT NULL, `syncVersion` INTEGER NOT NULL, `cachedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`id`))""")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_transaction_cache_ordenId` ON `transaction_cache` (`ordenId`)")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_transaction_cache_idempotencyKey` ON `transaction_cache` (`idempotencyKey`)")
+
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `payment_detail_cache` (`id` TEXT NOT NULL, `transaccionId` TEXT NOT NULL, `detalleOrdenId` TEXT NOT NULL, `cantidad` INTEGER NOT NULL, `montoCentavos` INTEGER NOT NULL, `cachedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`id`))""")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_payment_detail_cache_transaccionId` ON `payment_detail_cache` (`transaccionId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_payment_detail_cache_detalleOrdenId` ON `payment_detail_cache` (`detalleOrdenId`)")
+
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `payment_stock_cache` (`id` TEXT NOT NULL, `transaccionId` TEXT NOT NULL, `detalleOrdenId` TEXT NOT NULL, `productoId` TEXT NOT NULL, `cantidad` INTEGER NOT NULL, `movimientoId` TEXT NOT NULL, `idempotencyKey` TEXT NOT NULL, `createdAt` TEXT NOT NULL, `cachedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`id`))""")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_payment_stock_cache_transaccionId` ON `payment_stock_cache` (`transaccionId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_payment_stock_cache_detalleOrdenId` ON `payment_stock_cache` (`detalleOrdenId`)")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_payment_stock_cache_idempotencyKey` ON `payment_stock_cache` (`idempotencyKey`)")
+
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `order_command_outbox` (`idempotencyKey` TEXT NOT NULL, `actorUserId` TEXT NOT NULL, `aggregateId` TEXT NOT NULL, `entity` TEXT NOT NULL, `entityId` TEXT NOT NULL, `operation` TEXT NOT NULL, `payloadJson` TEXT NOT NULL, `expectedVersion` INTEGER, `status` TEXT NOT NULL, `attemptCount` INTEGER NOT NULL, `nextAttemptAtMillis` INTEGER, `createdAtMillis` INTEGER NOT NULL, `updatedAtMillis` INTEGER NOT NULL, `resultJson` TEXT, `lastErrorCode` TEXT, PRIMARY KEY(`idempotencyKey`))""")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_command_outbox_actorUserId_status_createdAtMillis` ON `order_command_outbox` (`actorUserId`, `status`, `createdAtMillis`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_command_outbox_aggregateId_createdAtMillis` ON `order_command_outbox` (`aggregateId`, `createdAtMillis`)")
         }
     }
 }

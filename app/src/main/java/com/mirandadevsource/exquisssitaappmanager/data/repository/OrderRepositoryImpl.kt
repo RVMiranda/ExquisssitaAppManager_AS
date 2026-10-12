@@ -1,1 +1,174 @@
-﻿package com.mirandadevsource.exquisssitaappmanager.data.repository
+package com.mirandadevsource.exquisssitaappmanager.data.repository
+
+import androidx.room.withTransaction
+import com.mirandadevsource.exquisssitaappmanager.core.database.AppDatabase
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.*
+import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.*
+import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.OrderDetailDto
+import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.OrderDto
+import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
+import com.mirandadevsource.exquisssitaappmanager.data.mappers.toDomain
+import com.mirandadevsource.exquisssitaappmanager.data.mappers.toEntity
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.*
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.OrderRepository
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.query.Columns
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import java.time.Instant
+import java.util.UUID
+import javax.inject.Inject
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class OrderRepositoryImpl @Inject constructor(
+    supabase: SupabaseClient, networkMonitor: NetworkMonitor, commandDao: OrderCommandDao,
+    authRepository: AuthRepository, private val database: AppDatabase,
+    private val orderDao: OrderDao, private val detailDao: OrderDetailDao,
+    private val tableDao: TableDao, private val transactionDao: TransactionDao,
+    private val productDao: ProductDao,
+) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository), OrderRepository {
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun observeOrders(): Flow<List<Order>> = authRepository.state.flatMapLatest { state ->
+        val actor = (state as? AuthState.SignedIn)?.session?.userId ?: return@flatMapLatest flowOf(emptyList())
+        orderDao.observeAll(actor).map { rows -> rows.map { it.toDomain() } }
+    }
+    override fun observeOrdersForTable(tableId: String): Flow<List<Order>> = authRepository.state.flatMapLatest { state ->
+        val actor = (state as? AuthState.SignedIn)?.session?.userId ?: return@flatMapLatest flowOf(emptyList())
+        orderDao.observeForTable(tableId, actor).map { rows -> rows.map { it.toDomain() } }
+    }
+    override fun observeOrder(orderId: String): Flow<Order?> = authRepository.state.flatMapLatest { state ->
+        val actor = (state as? AuthState.SignedIn)?.session?.userId ?: return@flatMapLatest flowOf(null)
+        orderDao.observeById(orderId, actor).map { it?.toDomain() }
+    }
+    override fun observeOrderDetails(orderId: String): Flow<List<OrderDetail>> = authRepository.state.flatMapLatest { state ->
+        val actor = (state as? AuthState.SignedIn)?.session?.userId ?: return@flatMapLatest flowOf(emptyList())
+        detailDao.observeForOrder(orderId, actor).map { rows -> rows.map { it.toDomain() } }
+    }
+
+    override suspend fun refreshOrders(): Result<Unit> {
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa."))
+        if (!networkMonitor.isOnline() || !hasRemoteSession()) return Result.success(Unit)
+        return try {
+            syncActorCommands()
+            val orders = supabase.from(ORDERS).select(columns = ORDER_COLUMNS).decodeList<OrderDto>()
+            val details = supabase.from(DETAILS).select(columns = DETAIL_COLUMNS).decodeList<OrderDetailDto>()
+            val remoteOrderIds = orders.mapTo(hashSetOf()) { it.id }
+            val remoteDetailIds = details.mapTo(hashSetOf()) { it.id }
+            database.withTransaction {
+                orderDao.getAllForActor(actor).filter { it.syncState == OrderEntity.PENDING && it.id !in remoteOrderIds && commandDao.countPendingForEntity(actor, it.id) == 0 }
+                    .forEach { orderDao.deleteById(it.id); detailDao.deleteForOrder(it.id) }
+                detailDao.getForActor(actor).filter { it.id !in remoteDetailIds && commandDao.countPendingForEntity(actor, it.id) == 0 }
+                    .forEach { detailDao.deleteById(it.id) }
+                orders.forEach { dto -> if (commandDao.countPendingForEntity(actor, dto.id) == 0) orderDao.upsert(dto.toEntity(actor)) }
+                details.forEach { dto -> if (commandDao.countPendingForEntity(actor, dto.id) == 0) detailDao.upsert(dto.toEntity()) }
+            }
+            Result.success(Unit)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { if (failure.isNetworkFailure()) Result.success(Unit) else Result.failure(failure) }
+    }
+
+    override suspend fun openOrder(request: OpenOrderRequest): Result<String> {
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
+        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
+        if (request.serviceType == ServiceType.TABLE && request.tableId == null) return Result.failure(IllegalArgumentException("Una orden de mesa requiere mesa."))
+        if (request.tableId != null) {
+            val table = tableDao.getById(request.tableId) ?: return Result.failure(IllegalArgumentException("Mesa no disponible en caché."))
+            if (table.syncState == TableEntity.PENDING && table.actorUserId != actor) return Result.failure(IllegalStateException("La mesa todavía no está sincronizada con Supabase."))
+        }
+        val id = UUID.randomUUID().toString(); val now = Instant.now().toString()
+        val payload = buildJsonObject {
+            put("mesa_id", request.tableId); put("cliente_id", request.customerId); put("tipo_servicio", request.serviceType.databaseValue)
+            put("estado", OrderStatus.OPEN.databaseValue); put("fecha_apertura", now); put("notas", request.notes?.trim()?.ifBlank { null })
+        }.toString()
+        val order = OrderEntity(id, request.tableId, request.customerId, request.serviceType.databaseValue, OrderStatus.OPEN.databaseValue, now, null, request.notes, now, now, 0, actor, OrderEntity.PENDING)
+        return enqueueAndSave(actor, id, ORDERS, id, "INSERT", payload, 0) { orderDao.upsert(order) }
+    }
+
+    override suspend fun addItem(request: AddOrderItemRequest): Result<String> {
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
+        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
+        if (request.quantity <= 0 || request.unitPriceCents < 0) return Result.failure(IllegalArgumentException("Cantidad o precio inválido."))
+        val order = orderDao.getById(request.orderId) ?: return Result.failure(NoSuchElementException("Orden no disponible en caché."))
+        if (order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local."))
+        if (order.estado != OrderStatus.OPEN.databaseValue) return Result.failure(IllegalStateException("La orden no está abierta."))
+        val product = productDao.getById(request.productId) ?: return Result.failure(NoSuchElementException("Producto no disponible en caché."))
+        if (!product.activo || product.precioCentavos != request.unitPriceCents) return Result.failure(IllegalStateException("El producto cambió o está desactivado; sincroniza el catálogo."))
+        val id = UUID.randomUUID().toString(); val now = Instant.now().toString()
+        val payload = buildJsonObject {
+            put("orden_id", request.orderId); put("producto_id", request.productId); put("cantidad", request.quantity)
+            put("precio_unitario", request.unitPriceCents)
+            put("notas", request.notes?.trim()?.ifBlank { null })
+        }.toString()
+        val line = OrderDetailEntity(id, request.orderId, request.productId, request.quantity, request.unitPriceCents, PaymentLineStatus.PENDING.databaseValue, request.notes, now, now, 0, OrderDetailEntity.PENDING)
+        return enqueueAndSave(actor, request.orderId, DETAILS, id, "INSERT", payload, 0) { detailDao.upsert(line) }
+    }
+
+    override suspend fun updateItemQuantity(detailId: String, quantity: Int): Result<String> {
+        if (quantity <= 0) return Result.failure(IllegalArgumentException("La cantidad debe ser mayor que cero."))
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
+        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
+        val line = detailDao.getById(detailId) ?: return Result.failure(NoSuchElementException("Partida no encontrada."))
+        if (orderDao.getById(line.ordenId)?.actorUserId != actor) return Result.failure(IllegalStateException("La partida no pertenece a la sesión local."))
+        if (commandDao.countPendingForEntity(actor, detailId) > 0) return Result.failure(IllegalStateException("La partida tiene un cambio pendiente de sincronización."))
+        if (line.estadoPago != PaymentLineStatus.PENDING.databaseValue || transactionDao.countAllocationsForDetail(detailId) > 0) return Result.failure(IllegalStateException("No se puede cambiar una partida con pagos."))
+        val changed = line.copy(cantidad = quantity, syncState = OrderDetailEntity.PENDING)
+        return enqueueAndSave(actor, line.ordenId, DETAILS, detailId, "UPDATE", buildJsonObject { put("cantidad", quantity) }.toString(), line.syncVersion) { detailDao.upsert(changed) }
+    }
+
+    override suspend fun cancelItem(detailId: String): Result<String> {
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
+        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
+        val line = detailDao.getById(detailId) ?: return Result.failure(NoSuchElementException("Partida no encontrada."))
+        if (orderDao.getById(line.ordenId)?.actorUserId != actor) return Result.failure(IllegalStateException("La partida no pertenece a la sesión local."))
+        if (commandDao.countPendingForEntity(actor, detailId) > 0) return Result.failure(IllegalStateException("La partida tiene un cambio pendiente de sincronización."))
+        if (line.estadoPago != PaymentLineStatus.PENDING.databaseValue || transactionDao.countAllocationsForDetail(detailId) > 0) return Result.failure(IllegalStateException("Una partida con pagos no puede cancelarse sin regla de reembolso."))
+        val key = UUID.randomUUID().toString()
+        val payload = buildJsonObject { put("detalle_orden_id", detailId); put("p_idempotency_key", key) }.toString()
+        val changed = line.copy(estadoPago = PaymentLineStatus.CANCELLED.databaseValue, syncState = OrderDetailEntity.PENDING)
+        return enqueueAndSave(actor, line.ordenId, "cancelar_detalle_orden", detailId, "INSERT", payload, line.syncVersion, key) { detailDao.upsert(changed) }
+    }
+
+    override suspend fun cancelOrder(orderId: String): Result<String> {
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
+        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
+        val order = orderDao.getById(orderId) ?: return Result.failure(NoSuchElementException("Orden no encontrada."))
+        if (order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local."))
+        if (commandDao.countPendingForEntity(actor, orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un cambio pendiente de sincronización."))
+        if (order.estado != OrderStatus.OPEN.databaseValue || transactionDao.getForOrder(orderId).isNotEmpty()) return Result.failure(IllegalStateException("Una orden con pagos requiere definir el reembolso antes de cancelarla."))
+        val closedAt = Instant.now().toString(); val changed = order.copy(estado = OrderStatus.CANCELLED.databaseValue, fechaCierre = closedAt, syncState = OrderEntity.PENDING)
+        val payload = buildJsonObject { put("estado", OrderStatus.CANCELLED.databaseValue); put("fecha_cierre", closedAt) }.toString()
+        return enqueueAndSave(actor, orderId, ORDERS, orderId, "UPDATE", payload, order.syncVersion) { orderDao.upsert(changed) }
+    }
+
+    override suspend fun syncPendingCommands(): Result<Unit> {
+        val result = syncActorCommands()
+        if (result.isSuccess && hasRemoteSession()) return refreshOrders()
+        return result
+    }
+
+    private suspend fun enqueueAndSave(actor: String, aggregate: String, entity: String, entityId: String, op: String, payload: String, version: Long, key: String = UUID.randomUUID().toString(), save: suspend () -> Unit): Result<String> {
+        val command = OrderCommandEntity(key, actor, aggregate, entity, entityId, op, payload, version)
+        return try {
+            database.withTransaction { commandDao.insert(command); save() }
+            val submitted = submit(command)
+            if (submitted.status == OrderCommandEntity.SYNCED || submitted.status == OrderCommandEntity.REJECTED) refreshOrders()
+            Result.success(entityId)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { Result.failure(failure) }
+    }
+
+    private companion object {
+        const val ORDERS = "ordenes"; const val DETAILS = "detalle_orden"
+        val ORDER_COLUMNS = Columns.list("id, mesa_id, cliente_id, tipo_servicio, estado, fecha_apertura, fecha_cierre, notas, created_at, updated_at, sync_version")
+        val DETAIL_COLUMNS = Columns.list("id, orden_id, producto_id, cantidad, precio_unitario, estado_pago, notas, created_at, updated_at, sync_version")
+    }
+}

@@ -70,6 +70,8 @@ import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryVi
 import com.mirandadevsource.exquisssitaappmanager.features.loyalty.LoyaltyScanScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollViewModel
+import com.mirandadevsource.exquisssitaappmanager.features.tables.TablesScreen
+import com.mirandadevsource.exquisssitaappmanager.features.tables.TablesViewModel
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ApricotIllusion
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.BrandyBrown
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ChocolateFondant
@@ -106,6 +108,7 @@ fun MainScaffold(
     val employeesViewModel: EmployeesViewModel = hiltViewModel()
     val payrollViewModel: PayrollViewModel = hiltViewModel()
     val inventoryViewModel: InventoryViewModel = hiltViewModel()
+    val tablesViewModel: TablesViewModel = hiltViewModel()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -353,7 +356,9 @@ fun MainScaffold(
                     MainNavDestination.PAYROLL -> {
                         PayrollScreen(viewModel = payrollViewModel)
                     }
-                    MainNavDestination.TABLES,
+                    MainNavDestination.TABLES -> {
+                        TablesScreen(viewModel = tablesViewModel)
+                    }
                     MainNavDestination.ORDERS,
                     MainNavDestination.CASH_REGISTER -> {
                         ModulePlaceholderScreen(title = currentDestination.title)
