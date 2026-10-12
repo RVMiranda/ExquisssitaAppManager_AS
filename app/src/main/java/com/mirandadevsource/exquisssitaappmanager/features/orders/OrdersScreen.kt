@@ -82,6 +82,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.mirandadevsource.exquisssitaappmanager.features.payments.CheckoutScreen
+import com.mirandadevsource.exquisssitaappmanager.features.payments.PaymentViewModel
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderDetail
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderStatus
@@ -101,14 +104,38 @@ import java.util.Locale
 @Composable
 fun OrdersScreen(
     viewModel: OrderViewModel,
+    paymentViewModel: PaymentViewModel = hiltViewModel(),
     onNavigateToTables: (() -> Unit)? = null,
     onNavigateToCheckout: ((Order) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val paymentUiState by paymentViewModel.uiState.collectAsState()
+    var activeCheckoutOrder by remember { mutableStateOf<Order?>(null) }
 
-    // Si hay una orden seleccionada para gestionar, renderizamos la vista de Detalle de Comanda
-    if (uiState.selectedOrderId != null) {
+    // Si el usuario abrió el flujo de Cobro, mostramos la pantalla de Checkout
+    if (activeCheckoutOrder != null) {
+        CheckoutScreen(
+            uiState = paymentUiState,
+            onBack = {
+                activeCheckoutOrder = null
+                paymentViewModel.dismissUserMessage()
+            },
+            onSplitModeSelected = paymentViewModel::onSplitModeSelected,
+            onPaymentMethodSelected = paymentViewModel::onPaymentMethodSelected,
+            onItemQuantityChanged = paymentViewModel::onItemQuantityChanged,
+            onSelectAllItems = paymentViewModel::onSelectAllItems,
+            onClearItemSelection = paymentViewModel::onClearItemSelection,
+            onSplitCountChanged = paymentViewModel::onSplitCountChanged,
+            onCashReceivedChanged = paymentViewModel::onCashReceivedInputChanged,
+            onDismissMessage = paymentViewModel::dismissUserMessage,
+            onSubmitPayment = {
+                paymentViewModel.processPayment()
+            },
+            modifier = modifier,
+        )
+    } else if (uiState.selectedOrderId != null) {
+        // Si hay una orden seleccionada para gestionar, renderizamos la vista de Detalle de Comanda
         OrderDetailScreen(
             order = uiState.selectedOrder,
             details = uiState.selectedOrderDetails,
@@ -123,7 +150,11 @@ fun OrdersScreen(
             onUpdateQuantity = viewModel::updateItemQuantity,
             onPromptCancelItem = viewModel::promptCancelItem,
             onPromptCancelOrder = viewModel::promptCancelOrder,
-            onNavigateToCheckout = onNavigateToCheckout,
+            onNavigateToCheckout = { orderToPay ->
+                activeCheckoutOrder = orderToPay
+                paymentViewModel.loadOrder(orderToPay)
+                onNavigateToCheckout?.invoke(orderToPay)
+            },
             modifier = modifier,
         )
     } else {
