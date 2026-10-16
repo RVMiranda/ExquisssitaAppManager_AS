@@ -12,6 +12,7 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderDetailDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderCommandDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.TransactionDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.PromotionDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.EmployeeEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.InventoryCommandEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.PayrollPaymentIntentEntity
@@ -25,6 +26,9 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.T
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.PaymentDetailEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.PaymentStockEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.OrderCommandEntity
+import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.PromotionEntity
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.DailyClosureDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.DailyClosureEntity
 
 @Database(
     entities = [
@@ -41,8 +45,10 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.O
         PaymentDetailEntity::class,
         PaymentStockEntity::class,
         OrderCommandEntity::class,
+        PromotionEntity::class,
+        DailyClosureEntity::class,
     ],
-    version = 4,
+    version = 6,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -56,4 +62,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun orderDetailDao(): OrderDetailDao
     abstract fun orderCommandDao(): OrderCommandDao
     abstract fun transactionDao(): TransactionDao
+    abstract fun promotionDao(): PromotionDao
+    abstract fun dailyClosureDao(): DailyClosureDao
 }

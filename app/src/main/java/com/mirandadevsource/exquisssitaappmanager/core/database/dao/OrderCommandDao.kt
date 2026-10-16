@@ -19,6 +19,12 @@ interface OrderCommandDao {
     @Query("SELECT * FROM order_command_outbox WHERE idempotencyKey = :key LIMIT 1")
     suspend fun getByKey(key: String): OrderCommandEntity?
 
+    @Query("SELECT * FROM order_command_outbox WHERE actorUserId = :actorId AND entity = :entity AND aggregateId = :aggregateId AND status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH') ORDER BY createdAtMillis DESC LIMIT 1")
+    suspend fun getPendingForEntity(actorId: String, entity: String, aggregateId: String): OrderCommandEntity?
+
+    @Query("SELECT * FROM order_command_outbox WHERE actorUserId = :actorId AND entity = :entity AND aggregateId = :aggregateId ORDER BY createdAtMillis DESC LIMIT 1")
+    suspend fun getLatestForEntity(actorId: String, entity: String, aggregateId: String): OrderCommandEntity?
+
     @Query("SELECT * FROM order_command_outbox WHERE actorUserId = :actorId AND status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH') AND (nextAttemptAtMillis IS NULL OR nextAttemptAtMillis <= :now) ORDER BY createdAtMillis, idempotencyKey")
     suspend fun getRecoverableForActor(actorId: String, now: Long): List<OrderCommandEntity>
 
@@ -39,4 +45,7 @@ interface OrderCommandDao {
 
     @Query("SELECT * FROM order_command_outbox WHERE actorUserId = :actorId AND entity = 'registrar_pago' AND aggregateId = :orderId AND status != 'SYNCED' ORDER BY createdAtMillis")
     fun observePaymentCommands(actorId: String, orderId: String): Flow<List<OrderCommandEntity>>
+
+    @Query("SELECT COUNT(*) FROM order_command_outbox WHERE status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH')")
+    fun observePendingCount(): Flow<Int>
 }

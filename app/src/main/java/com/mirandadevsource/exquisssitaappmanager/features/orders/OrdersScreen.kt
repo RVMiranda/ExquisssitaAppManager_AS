@@ -111,14 +111,13 @@ fun OrdersScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val paymentUiState by paymentViewModel.uiState.collectAsState()
-    var activeCheckoutOrder by remember { mutableStateOf<Order?>(null) }
 
     // Si el usuario abrió el flujo de Cobro, mostramos la pantalla de Checkout
-    if (activeCheckoutOrder != null) {
+    if (uiState.activeCheckoutOrder != null) {
         CheckoutScreen(
             uiState = paymentUiState,
             onBack = {
-                activeCheckoutOrder = null
+                viewModel.dismissCheckout()
                 paymentViewModel.dismissUserMessage()
             },
             onSplitModeSelected = paymentViewModel::onSplitModeSelected,
@@ -139,6 +138,7 @@ fun OrdersScreen(
         OrderDetailScreen(
             order = uiState.selectedOrder,
             details = uiState.selectedOrderDetails,
+            payments = uiState.selectedOrderPayments,
             table = uiState.selectedOrder?.tableId?.let { uiState.tableMap[it] },
             productMap = uiState.productMap,
             isLoadingDetails = uiState.isLoadingOrderDetails,
@@ -151,7 +151,7 @@ fun OrdersScreen(
             onPromptCancelItem = viewModel::promptCancelItem,
             onPromptCancelOrder = viewModel::promptCancelOrder,
             onNavigateToCheckout = { orderToPay ->
-                activeCheckoutOrder = orderToPay
+                viewModel.startCheckout(orderToPay)
                 paymentViewModel.loadOrder(orderToPay)
                 onNavigateToCheckout?.invoke(orderToPay)
             },

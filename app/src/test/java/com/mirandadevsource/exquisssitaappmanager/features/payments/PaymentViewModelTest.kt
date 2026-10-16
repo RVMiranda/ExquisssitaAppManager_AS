@@ -250,6 +250,108 @@ class PaymentViewModelTest {
     }
 
     @Test
+    fun `PaymentUiState correctly calculates balances with partial payments`() {
+        val line1 = OrderDetail(
+            id = "det-1",
+            orderId = "ord-100",
+            productId = "p-1",
+            quantity = 3,
+            unitPriceCents = 3000L, // $90.00
+            paymentStatus = PaymentLineStatus.PENDING,
+            notes = null,
+            createdAt = "2026-10-12T00:00:00Z",
+            updatedAt = "2026-10-12T00:00:00Z",
+            syncVersion = 1,
+        )
+        val line2 = OrderDetail(
+            id = "det-2",
+            orderId = "ord-100",
+            productId = "p-2",
+            quantity = 2,
+            unitPriceCents = 3000L, // $60.00
+            paymentStatus = PaymentLineStatus.PENDING,
+            notes = null,
+            createdAt = "2026-10-12T00:00:00Z",
+            updatedAt = "2026-10-12T00:00:00Z",
+            syncVersion = 1,
+        )
+        val payment1 = Payment(
+            id = "pay-1",
+            orderId = "ord-100",
+            amountCents = 6000L,
+            method = PaymentMethod.CASH,
+            paidAt = "2026-10-12T01:00:00Z",
+            idempotencyKey = "key-1",
+            status = PaymentStatus.CONFIRMED,
+            allocations = listOf(
+                PaymentAllocation(
+                    orderDetailId = "det-1",
+                    quantity = 2,
+                    amountCents = 6000L,
+                    stockQuantity = 2,
+                )
+            ),
+        )
+
+        val state = PaymentUiState(
+            order = sampleOrder,
+            details = listOf(line1, line2),
+            payments = listOf(payment1),
+            productMap = sampleProducts.associateBy { it.id },
+        )
+
+        assertEquals(15000L, state.totalOrderCents)
+        assertEquals(6000L, state.paidAmountCents)
+        assertEquals(9000L, state.pendingBalanceCents)
+        assertEquals(6000L, state.linePaidCents("det-1"))
+        assertEquals(3000L, state.linePendingCents("det-1"))
+        assertEquals(1, state.lineRemainingQuantity("det-1")) // 3 - 2 = 1 remaining unit
+        assertEquals(0L, state.linePaidCents("det-2"))
+        assertEquals(6000L, state.linePendingCents("det-2"))
+        assertEquals(2, state.lineRemainingQuantity("det-2"))
+        assertEquals(1, state.lineRemainingStock("det-1"))
+        assertEquals(2, state.lineRemainingStock("det-2"))
+    }
+
+    @Test
+    fun `Payment allocations for non-inventory products set stockQuantity to 0`() {
+        val nonInventoryProduct = Product(
+            id = "p-kitchen",
+            nombre = "Orden de Tacos Preparados",
+            precioCentavos = 4500L,
+            categoria = "Tacos",
+            controlaInventario = false,
+            stockActual = null,
+            stockMinimo = null,
+            activo = true,
+            createdAt = "2026-10-12T00:00:00Z",
+            updatedAt = "2026-10-12T00:00:00Z",
+            syncVersion = 1,
+        )
+        val kitchenLine = OrderDetail(
+            id = "det-kitchen",
+            orderId = "ord-100",
+            productId = "p-kitchen",
+            quantity = 2,
+            unitPriceCents = 4500L,
+            paymentStatus = PaymentLineStatus.PENDING,
+            notes = null,
+            createdAt = "2026-10-12T00:00:00Z",
+            updatedAt = "2026-10-12T00:00:00Z",
+            syncVersion = 1,
+        )
+        val products = mapOf(nonInventoryProduct.id to nonInventoryProduct)
+        val state = PaymentUiState(
+            order = sampleOrder,
+            details = listOf(kitchenLine),
+            productMap = products,
+            splitMode = SplitMode.FULL,
+        )
+
+        assertEquals(0, state.lineRemainingStock("det-kitchen"))
+    }
+
+    @Test
     fun `FakePaymentRepository processes payment command successfully`() = runBlocking {
         val repo = FakePaymentRepository()
 

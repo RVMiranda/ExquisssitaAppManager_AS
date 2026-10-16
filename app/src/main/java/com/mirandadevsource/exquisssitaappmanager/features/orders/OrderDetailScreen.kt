@@ -58,7 +58,9 @@ import androidx.compose.ui.unit.sp
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderDetail
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderStatus
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.Payment
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentLineStatus
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.ServiceType
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Table
@@ -75,6 +77,7 @@ import java.util.Locale
 fun OrderDetailScreen(
     order: Order?,
     details: List<OrderDetail>,
+    payments: List<Payment> = emptyList(),
     table: Table?,
     productMap: Map<String, Product>,
     isLoadingDetails: Boolean,
@@ -106,55 +109,20 @@ fun OrderDetailScreen(
     }
 
     val isOpen = order.status == OrderStatus.OPEN
-    val pendingCents = details.filter { it.paymentStatus == PaymentLineStatus.PENDING }.sumOf { it.lineTotalCents }
-    val paidCents = details.filter { it.paymentStatus == PaymentLineStatus.PAID }.sumOf { it.lineTotalCents }
     val totalCents = details.filter { it.paymentStatus != PaymentLineStatus.CANCELLED }.sumOf { it.lineTotalCents }
+    val paidFromPayments = payments.filter { it.status == PaymentStatus.CONFIRMED }.sumOf { it.amountCents }
+    val paidFromLines = details.filter { it.paymentStatus == PaymentLineStatus.PAID }.sumOf { it.lineTotalCents }
+    val paidCents = maxOf(paidFromPayments, paidFromLines).coerceAtMost(totalCents)
+    val pendingCents = (totalCents - paidCents).coerceAtLeast(0L)
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "Comanda #${order.id.take(8).uppercase()}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = BrandyBrown,
-                        )
-                        val serviceTitle = when (order.serviceType) {
-                            ServiceType.TABLE -> "Mesa: ${table?.number ?: "Asignada"}"
-                            ServiceType.TAKEOUT -> "Para llevar"
-                            ServiceType.DELIVERY -> "Domicilio"
-                        }
-                        Text(
-                            text = serviceTitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = ChocolateFondant.copy(alpha = 0.8f),
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = "Volver",
-                            tint = BrandyBrown,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = VanillaCustard,
-                ),
-            )
-        },
-        containerColor = VanillaCustard,
+    Surface(
         modifier = modifier.fillMaxSize(),
-    ) { paddingValues ->
+        color = VanillaCustard,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             // Mensaje de acción / alerta
             if (!userMessage.isNullOrBlank()) {

@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -92,52 +93,13 @@ fun CheckoutScreen(
 ) {
     val order = uiState.order
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "Cobro de Cuenta",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = BrandyBrown,
-                        )
-                        val subtitle = if (order != null) {
-                            val serviceName = when (order.serviceType) {
-                                ServiceType.TABLE -> "Mesa ${uiState.table?.number ?: "Asignada"}"
-                                ServiceType.TAKEOUT -> "Para Llevar"
-                                ServiceType.DELIVERY -> "Domicilio"
-                            }
-                            "Comanda #${order.id.take(8).uppercase()} • $serviceName"
-                        } else ""
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = ChocolateFondant.copy(alpha = 0.8f),
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = "Volver",
-                            tint = BrandyBrown,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = VanillaCustard),
-            )
-        },
-        containerColor = VanillaCustard,
-        modifier = modifier.fillMaxSize(),
-    ) { paddingValues ->
-        if (order == null) {
+    if (order == null) {
+        Surface(
+            modifier = modifier.fillMaxSize(),
+            color = VanillaCustard,
+        ) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -146,15 +108,20 @@ fun CheckoutScreen(
                     color = ChocolateFondant,
                 )
             }
-            return@Scaffold
         }
+        return
+    }
 
+    Surface(
+        modifier = modifier.fillMaxSize(),
+        color = VanillaCustard,
+    ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 32.dp),
         ) {
             // 1. Banner informativo / error
             val bannerMsg = uiState.errorMessage ?: uiState.successMessage
@@ -203,12 +170,14 @@ fun CheckoutScreen(
                         }
                         items(uiState.pendingDetails, key = { it.id }) { item ->
                             val selectedQty = uiState.selectedItemQuantities[item.id] ?: 0
+                            val maxQty = uiState.lineRemainingQuantity(item.id)
                             val productName = uiState.productMap[item.productId]?.nombre
                                 ?: "Producto (${item.productId.take(6)})"
                             PaymentItemRow(
                                 item = item,
                                 productName = productName,
                                 selectedQuantity = selectedQty,
+                                maxQuantity = maxQty,
                                 onQuantityChange = { delta -> onItemQuantityChanged(item.id, delta) },
                             )
                         }
@@ -516,6 +485,7 @@ private fun PaymentItemRow(
     item: OrderDetail,
     productName: String,
     selectedQuantity: Int,
+    maxQuantity: Int,
     onQuantityChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -540,7 +510,7 @@ private fun PaymentItemRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${formatPesos(item.unitPriceCents)} c/u • Pendiente: ${item.quantity}",
+                    text = "${formatPesos(item.unitPriceCents)} c/u • Pendiente: $maxQuantity",
                     style = MaterialTheme.typography.labelSmall,
                     color = ChocolateFondant.copy(alpha = 0.65f),
                 )
@@ -584,13 +554,13 @@ private fun PaymentItemRow(
                 ) {
                     IconButton(
                         onClick = { onQuantityChange(1) },
-                        enabled = selectedQuantity < item.quantity,
+                        enabled = selectedQuantity < maxQuantity,
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Add,
                             contentDescription = "Más",
-                            tint = if (selectedQuantity < item.quantity) BrandyBrown else Color.Gray,
+                            tint = if (selectedQuantity < maxQuantity) BrandyBrown else Color.Gray,
                             modifier = Modifier.size(12.dp),
                         )
                     }

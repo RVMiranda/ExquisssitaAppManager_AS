@@ -92,21 +92,20 @@ class PaymentViewModel @Inject constructor(
         detailsJob = orderRepository.observeOrderDetails(order.id)
             .onEach { details ->
                 _uiState.update { state ->
-                    val pending = details.filter { it.paymentStatus == PaymentLineStatus.PENDING }
-                    // Mantener o inicializar selección de artículos
-                    val currentSelection = state.selectedItemQuantities.toMutableMap()
+                    val updatedState = state.copy(details = details)
+                    val pending = updatedState.pendingDetails
+                    // Mantener o inicializar selección de artículos acotada a unidades pendientes reales
+                    val currentSelection = updatedState.selectedItemQuantities.toMutableMap()
                     pending.forEach { line ->
+                        val maxQty = updatedState.lineRemainingQuantity(line.id)
                         if (!currentSelection.containsKey(line.id)) {
-                            currentSelection[line.id] = line.quantity
+                            currentSelection[line.id] = maxQty
                         } else {
                             val current = currentSelection[line.id] ?: 0
-                            currentSelection[line.id] = current.coerceIn(0, line.quantity)
+                            currentSelection[line.id] = current.coerceIn(0, maxQty)
                         }
                     }
-                    state.copy(
-                        details = details,
-                        selectedItemQuantities = currentSelection,
-                    )
+                    updatedState.copy(selectedItemQuantities = currentSelection)
                 }
             }
             .launchIn(viewModelScope)
@@ -114,7 +113,16 @@ class PaymentViewModel @Inject constructor(
         // Observar pagos históricos de la comanda
         paymentsJob = paymentRepository.observePayments(order.id)
             .onEach { payments ->
-                _uiState.update { it.copy(payments = payments) }
+                _uiState.update { state ->
+                    val updatedState = state.copy(payments = payments)
+                    val currentSelection = updatedState.selectedItemQuantities.toMutableMap()
+                    updatedState.pendingDetails.forEach { line ->
+                        val maxQty = updatedState.lineRemainingQuantity(line.id)
+                        val current = currentSelection[line.id] ?: 0
+                        currentSelection[line.id] = current.coerceIn(0, maxQty)
+                    }
+                    updatedState.copy(selectedItemQuantities = currentSelection)
+                }
             }
             .launchIn(viewModelScope)
     }
@@ -125,8 +133,8 @@ class PaymentViewModel @Inject constructor(
     fun onSplitModeSelected(mode: SplitMode) {
         _uiState.update { state ->
             val updatedSelection = if (mode == SplitMode.BY_ITEMS && state.selectedItemQuantities.values.all { it == 0 }) {
-                // Al entrar a por artículos por primera vez, sugerir 1 unidad por renglón
-                state.pendingDetails.associate { it.id to 1 }
+                // Al entrar a por artículos por primera vez, sugerir 1 unidad por renglón si hay saldo
+                state.pendingDetails.associate { it.id to minOf(1, state.lineRemainingQuantity(it.id)) }
             } else {
                 state.selectedItemQuantities
             }
@@ -150,9 +158,9 @@ class PaymentViewModel @Inject constructor(
      */
     fun onItemQuantityChanged(detailId: String, delta: Int) {
         _uiState.update { state ->
-            val line = state.details.firstOrNull { it.id == detailId } ?: return@update state
+            val maxQty = state.lineRemainingQuantity(detailId)
             val currentQty = state.selectedItemQuantities[detailId] ?: 0
-            val newQty = (currentQty + delta).coerceIn(0, line.quantity)
+            val newQty = (currentQty + delta).coerceIn(0, maxQty)
             val updatedMap = state.selectedItemQuantities.toMutableMap()
             updatedMap[detailId] = newQty
             state.copy(selectedItemQuantities = updatedMap)
@@ -164,7 +172,7 @@ class PaymentViewModel @Inject constructor(
      */
     fun onSelectAllItems() {
         _uiState.update { state ->
-            val allMax = state.pendingDetails.associate { it.id to it.quantity }
+            val allMax = state.pendingDetails.associate { it.id to state.lineRemainingQuantity(it.id) }
             state.copy(selectedItemQuantities = allMax)
         }
     }
@@ -269,7 +277,8 @@ class PaymentViewModel @Inject constructor(
 
     /**
      * Construye las asignaciones asegurando que cada partida reciba su cuota
-     * y su consumo de existencias correspondiente sin exceder las unidades ordenadas.
+     * y su consumo de existencias correspondiente sin exceder las unidades ordenadas
+     * ni generar consumos de inventario para productos con controlaInventario = false.
      */
     private fun buildAllocations(state: PaymentUiState, targetAmountCents: Long): List<PaymentAllocation> {
         val pending = state.pendingDetails
@@ -277,24 +286,42 @@ class PaymentViewModel @Inject constructor(
 
         return when (state.splitMode) {
             SplitMode.FULL -> {
-                pending.map { line ->
+                pending.mapNotNull { line ->
+                    val linePending = state.linePendingCents(line.id)
+                    if (linePending <= 0L) return@mapNotNull null
+                    val remainingUnits = state.lineRemainingQuantity(line.id)
+                    val remainingStock = state.lineRemainingStock(line.id)
+                    val allocQty = maxOf(remainingUnits, remainingStock).coerceIn(1, line.quantity)
+                    val product = state.productMap[line.productId]
+                    val stockQty = if (product?.controlaInventario == true) remainingStock.coerceIn(0, allocQty) else 0
+
                     PaymentAllocation(
                         orderDetailId = line.id,
-                        quantity = line.quantity,
-                        amountCents = line.quantity.toLong() * line.unitPriceCents,
-                        stockQuantity = line.quantity,
+                        quantity = allocQty,
+                        amountCents = linePending,
+                        stockQuantity = stockQty,
                     )
                 }
             }
             SplitMode.BY_ITEMS -> {
                 pending.mapNotNull { line ->
-                    val qtyToPay = state.selectedItemQuantities[line.id] ?: 0
+                    val maxQty = state.lineRemainingQuantity(line.id)
+                    val qtyToPay = (state.selectedItemQuantities[line.id] ?: 0).coerceIn(0, maxQty)
                     if (qtyToPay > 0) {
+                        val linePending = state.linePendingCents(line.id)
+                        val amount = minOf(qtyToPay.toLong() * line.unitPriceCents, linePending)
+                        val product = state.productMap[line.productId]
+                        val remainingStock = state.lineRemainingStock(line.id)
+                        val stockQty = if (product?.controlaInventario == true) {
+                            minOf(qtyToPay, remainingStock)
+                        } else {
+                            0
+                        }
                         PaymentAllocation(
                             orderDetailId = line.id,
                             quantity = qtyToPay,
-                            amountCents = qtyToPay.toLong() * line.unitPriceCents,
-                            stockQuantity = qtyToPay,
+                            amountCents = amount,
+                            stockQuantity = stockQty,
                         )
                     } else null
                 }
@@ -306,20 +333,32 @@ class PaymentViewModel @Inject constructor(
 
                 for (line in pending) {
                     if (remainingToAllocate <= 0L) break
-                    val lineTotal = line.quantity.toLong() * line.unitPriceCents
-                    val amountForThisLine = minOf(remainingToAllocate, lineTotal)
+                    val linePending = state.linePendingCents(line.id)
+                    val amountForThisLine = minOf(remainingToAllocate, linePending)
                     if (amountForThisLine > 0L) {
-                        // Unidades completas cubiertas por esta aportación monetaria
-                        val unitsCovered = (amountForThisLine / line.unitPriceCents)
+                        val unitsCovered = (amountForThisLine / line.unitPriceCents).toInt()
+                        val allocQty = ((amountForThisLine + line.unitPriceCents - 1) / line.unitPriceCents)
                             .toInt()
-                            .coerceIn(0, line.quantity)
+                            .coerceIn(1, line.quantity)
+
+                        val product = state.productMap[line.productId]
+                        val remainingStock = state.lineRemainingStock(line.id)
+                        val stockQty = if (product?.controlaInventario == true) {
+                            if (amountForThisLine == linePending) {
+                                remainingStock.coerceIn(0, allocQty)
+                            } else {
+                                unitsCovered.coerceIn(0, minOf(allocQty, remainingStock))
+                            }
+                        } else {
+                            0
+                        }
 
                         result.add(
                             PaymentAllocation(
                                 orderDetailId = line.id,
-                                quantity = line.quantity,
+                                quantity = allocQty,
                                 amountCents = amountForThisLine,
-                                stockQuantity = unitsCovered,
+                                stockQuantity = stockQty,
                             )
                         )
                         remainingToAllocate -= amountForThisLine

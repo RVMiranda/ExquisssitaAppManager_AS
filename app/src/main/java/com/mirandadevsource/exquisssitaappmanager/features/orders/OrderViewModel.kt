@@ -10,6 +10,7 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.ServiceType
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.InventoryRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.OrderRepository
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.PaymentRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.TableRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -25,12 +26,14 @@ class OrderViewModel @Inject constructor(
     private val orderRepository: OrderRepository,
     private val tableRepository: TableRepository,
     private val inventoryRepository: InventoryRepository,
+    private val paymentRepository: PaymentRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OrderUiState(isLoading = true))
     val uiState: StateFlow<OrderUiState> = _uiState.asStateFlow()
 
     private var detailsJob: Job? = null
+    private var paymentsJob: Job? = null
 
     init {
         // Observar órdenes reactivamente
@@ -169,6 +172,7 @@ class OrderViewModel @Inject constructor(
     // --- Detalle de Comanda Seleccionada ---
     fun selectOrder(orderId: String) {
         detailsJob?.cancel()
+        paymentsJob?.cancel()
         _uiState.update {
             it.copy(
                 selectedOrderId = orderId,
@@ -186,19 +190,38 @@ class OrderViewModel @Inject constructor(
                 }
             }
         }
+        paymentsJob = viewModelScope.launch {
+            paymentRepository.observePayments(orderId).collect { payments ->
+                _uiState.update {
+                    it.copy(selectedOrderPayments = payments)
+                }
+            }
+        }
     }
 
     fun dismissOrderDetail() {
         detailsJob?.cancel()
+        paymentsJob?.cancel()
         detailsJob = null
+        paymentsJob = null
         _uiState.update {
             it.copy(
                 selectedOrderId = null,
                 selectedOrderDetails = emptyList(),
+                selectedOrderPayments = emptyList(),
                 isLoadingOrderDetails = false,
                 orderActionError = null,
+                activeCheckoutOrder = null,
             )
         }
+    }
+
+    fun startCheckout(order: Order) {
+        _uiState.update { it.copy(activeCheckoutOrder = order) }
+    }
+
+    fun dismissCheckout() {
+        _uiState.update { it.copy(activeCheckoutOrder = null) }
     }
 
     // --- Modal Agregar Producto ---

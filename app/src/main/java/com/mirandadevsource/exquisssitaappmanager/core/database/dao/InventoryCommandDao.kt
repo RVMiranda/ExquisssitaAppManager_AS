@@ -25,4 +25,6 @@ interface InventoryCommandDao {
     @Query("SELECT * FROM inventory_command_outbox WHERE actorUserId = :actorId AND status != 'SYNCED' ORDER BY createdAtMillis DESC")
     fun observeUnresolvedCommands(actorId: String): Flow<List<InventoryCommandEntity>>
 
+    @Query("SELECT COUNT(*) FROM inventory_command_outbox WHERE status IN ('PENDING', 'PROCESSING', 'CONFIRMED_AWAITING_REFRESH')")
+    fun observePendingCount(): Flow<Int>
 }

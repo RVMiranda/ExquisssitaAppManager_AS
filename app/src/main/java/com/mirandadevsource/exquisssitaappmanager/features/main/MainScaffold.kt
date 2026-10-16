@@ -13,11 +13,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Construction
 import androidx.compose.material.icons.outlined.Dashboard
@@ -48,6 +52,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,15 +66,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.AppUserSession
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.ServiceType
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.UserRole
 import com.mirandadevsource.exquisssitaappmanager.features.dashboard.DashboardScreen
+import com.mirandadevsource.exquisssitaappmanager.features.dashboard.DashboardViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.employees.EmployeesScreen
 import com.mirandadevsource.exquisssitaappmanager.features.employees.EmployeesViewModel
+import com.mirandadevsource.exquisssitaappmanager.features.cash_register.CashRegisterScreen
+import com.mirandadevsource.exquisssitaappmanager.features.cash_register.CashRegisterViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryScreen
 import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.loyalty.LoyaltyScanScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollViewModel
+import com.mirandadevsource.exquisssitaappmanager.features.promotions.PromotionsScreen
+import com.mirandadevsource.exquisssitaappmanager.features.promotions.PromotionsViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.orders.OrderViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.orders.OrdersScreen
 import com.mirandadevsource.exquisssitaappmanager.features.tables.TablesScreen
@@ -87,14 +98,55 @@ enum class MainNavDestination(
     val requiresManagerAccess: Boolean = false,
 ) {
     DASHBOARD("Dashboard", Icons.Outlined.Dashboard),
-    LOYALTY("Lealtad y Clientes", Icons.Outlined.QrCodeScanner),
+    LOYALTY("Lealtad y QR", Icons.Outlined.QrCodeScanner),
     INVENTORY("Menú e Inventario", Icons.Outlined.Inventory2),
+    PROMOTIONS("Promociones y Ofertas", Icons.Outlined.Campaign, requiresManagerAccess = true),
     EMPLOYEES("Personal y Empleados", Icons.Outlined.People, requiresManagerAccess = true),
     PAYROLL("Nómina Semanal", Icons.Outlined.Payments, requiresManagerAccess = true),
     TABLES("Mesas y Salón", Icons.Outlined.TableRestaurant),
     ORDERS("Órdenes y Comandas", Icons.AutoMirrored.Outlined.ReceiptLong),
     CASH_REGISTER("Corte de Caja", Icons.Outlined.PointOfSale, requiresManagerAccess = true),
 }
+
+private data class DrawerNavGroup(
+    val title: String?,
+    val destinations: List<MainNavDestination>,
+)
+
+private val DrawerNavGroups = listOf(
+    DrawerNavGroup(
+        title = null,
+        destinations = listOf(MainNavDestination.DASHBOARD),
+    ),
+    DrawerNavGroup(
+        title = "Órdenes",
+        destinations = listOf(
+            MainNavDestination.ORDERS,
+            MainNavDestination.INVENTORY,
+            MainNavDestination.TABLES,
+        ),
+    ),
+    DrawerNavGroup(
+        title = "Clientes",
+        destinations = listOf(
+            MainNavDestination.LOYALTY,
+            MainNavDestination.PROMOTIONS,
+        ),
+    ),
+    DrawerNavGroup(
+        title = "Personal",
+        destinations = listOf(
+            MainNavDestination.EMPLOYEES,
+            MainNavDestination.PAYROLL,
+        ),
+    ),
+    DrawerNavGroup(
+        title = null,
+        destinations = listOf(
+            MainNavDestination.CASH_REGISTER,
+        ),
+    ),
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,8 +162,11 @@ fun MainScaffold(
     val employeesViewModel: EmployeesViewModel = hiltViewModel()
     val payrollViewModel: PayrollViewModel = hiltViewModel()
     val inventoryViewModel: InventoryViewModel = hiltViewModel()
+    val promotionsViewModel: PromotionsViewModel = hiltViewModel()
     val tablesViewModel: TablesViewModel = hiltViewModel()
     val ordersViewModel: OrderViewModel = hiltViewModel()
+    val cashRegisterViewModel: CashRegisterViewModel = hiltViewModel()
+    val dashboardViewModel: DashboardViewModel = hiltViewModel()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -121,6 +176,7 @@ fun MainScaffold(
                 drawerShape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp),
                 modifier = Modifier.width(300.dp),
             ) {
+                val drawerScrollState = rememberScrollState()
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -139,7 +195,7 @@ fun MainScaffold(
                         color = ChocolateFondant.copy(alpha = 0.7f),
                     )
 
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(14.dp))
 
                     // Ficha de Empleado / Perfil
                     Surface(
@@ -191,55 +247,76 @@ fun MainScaffold(
                         }
                     }
 
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(12.dp))
                     HorizontalDivider(color = ApricotIllusion, thickness = 1.dp)
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(8.dp))
 
-                    // Elementos de Navegación del Menú Hamburguesa
-                    MainNavDestination.entries.forEach { destination ->
-                        if (destination.requiresManagerAccess &&
-                            session?.role != UserRole.ADMIN &&
-                            session?.role != UserRole.GERENTE
-                        ) {
-                            return@forEach
+                    // Elementos de Navegación Agrupados por Categoría
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(drawerScrollState),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        val isManagerOrAdmin = session?.role == UserRole.ADMIN || session?.role == UserRole.GERENTE
+
+                        DrawerNavGroups.forEachIndexed { index, group ->
+                            val visibleItems = group.destinations.filter { !it.requiresManagerAccess || isManagerOrAdmin }
+                            if (visibleItems.isNotEmpty()) {
+                                if (group.title != null) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        text = group.title.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ChocolateFondant.copy(alpha = 0.55f),
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                                    )
+                                } else if (index > 0) {
+                                    Spacer(Modifier.height(6.dp))
+                                    HorizontalDivider(color = ApricotIllusion.copy(alpha = 0.5f), thickness = 1.dp)
+                                    Spacer(Modifier.height(6.dp))
+                                }
+
+                                visibleItems.forEach { destination ->
+                                    NavigationDrawerItem(
+                                        label = {
+                                            Text(
+                                                text = destination.title,
+                                                fontWeight = if (currentDestination == destination) FontWeight.Bold else FontWeight.Normal,
+                                            )
+                                        },
+                                        icon = {
+                                            Icon(
+                                                imageVector = destination.icon,
+                                                contentDescription = destination.title,
+                                                modifier = Modifier.size(22.dp),
+                                            )
+                                        },
+                                        selected = currentDestination == destination,
+                                        onClick = {
+                                            currentDestination = destination
+                                            loyaltyInitialPhone = null
+                                            scope.launch { drawerState.close() }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = NavigationDrawerItemDefaults.colors(
+                                            selectedContainerColor = ApricotIllusion.copy(alpha = 0.4f),
+                                            unselectedContainerColor = Color.Transparent,
+                                            selectedIconColor = BrandyBrown,
+                                            unselectedIconColor = ChocolateFondant,
+                                            selectedTextColor = BrandyBrown,
+                                            unselectedTextColor = ChocolateFondant,
+                                        ),
+                                        modifier = Modifier.padding(vertical = 1.dp),
+                                    )
+                                }
+                            }
                         }
-
-                        NavigationDrawerItem(
-                            label = {
-                                Text(
-                                    text = destination.title,
-                                    fontWeight = if (currentDestination == destination) FontWeight.Bold else FontWeight.Normal,
-                                )
-                            },
-                            icon = {
-                                Icon(
-                                    imageVector = destination.icon,
-                                    contentDescription = destination.title,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            },
-                            selected = currentDestination == destination,
-                            onClick = {
-                                currentDestination = destination
-                                loyaltyInitialPhone = null
-                                scope.launch { drawerState.close() }
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = NavigationDrawerItemDefaults.colors(
-                                selectedContainerColor = ApricotIllusion.copy(alpha = 0.4f),
-                                unselectedContainerColor = Color.Transparent,
-                                selectedIconColor = BrandyBrown,
-                                unselectedIconColor = ChocolateFondant,
-                                selectedTextColor = BrandyBrown,
-                                unselectedTextColor = ChocolateFondant,
-                            ),
-                            modifier = Modifier.padding(vertical = 2.dp),
-                        )
                     }
 
-                    Spacer(Modifier.weight(1f))
                     HorizontalDivider(color = ApricotIllusion, thickness = 1.dp)
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(12.dp))
 
                     // Botón Cerrar Sesión
                     OutlinedButton(
@@ -274,21 +351,92 @@ fun MainScaffold(
     ) {
         Scaffold(
             topBar = {
+                val ordersUiState by ordersViewModel.uiState.collectAsState()
+                val isOrders = currentDestination == MainNavDestination.ORDERS
+                val activeCheckout = if (isOrders) ordersUiState.activeCheckoutOrder else null
+                val selectedOrder = if (isOrders) ordersUiState.selectedOrder else null
+
                 TopAppBar(
                     title = {
-                        Text(
-                            text = currentDestination.title,
-                            color = BrandyBrown,
-                            fontWeight = FontWeight.Bold,
-                        )
+                        when {
+                            activeCheckout != null -> {
+                                Column {
+                                    Text(
+                                        text = "Cobro de Cuenta",
+                                        color = BrandyBrown,
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    val serviceLabel = when (activeCheckout.serviceType) {
+                                        ServiceType.TABLE -> "Mesa ${ordersUiState.tableMap[activeCheckout.tableId]?.number ?: "Asignada"}"
+                                        ServiceType.TAKEOUT -> "Para Llevar"
+                                        ServiceType.DELIVERY -> "Domicilio"
+                                    }
+                                    Text(
+                                        text = "Comanda #${activeCheckout.id.take(8).uppercase()} • $serviceLabel",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = ChocolateFondant.copy(alpha = 0.8f),
+                                    )
+                                }
+                            }
+                            selectedOrder != null -> {
+                                Column {
+                                    Text(
+                                        text = "Comanda #${selectedOrder.id.take(8).uppercase()}",
+                                        color = BrandyBrown,
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    val serviceLabel = when (selectedOrder.serviceType) {
+                                        ServiceType.TABLE -> "Mesa ${ordersUiState.tableMap[selectedOrder.tableId]?.number ?: "Asignada"}"
+                                        ServiceType.TAKEOUT -> "Para Llevar"
+                                        ServiceType.DELIVERY -> "Domicilio"
+                                    }
+                                    Text(
+                                        text = "$serviceLabel • ${selectedOrder.status.databaseValue}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = ChocolateFondant.copy(alpha = 0.8f),
+                                    )
+                                }
+                            }
+                            else -> {
+                                Text(
+                                    text = currentDestination.title,
+                                    color = BrandyBrown,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
                     },
                     navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(
-                                imageVector = Icons.Outlined.Menu,
-                                contentDescription = "Menú",
-                                tint = BrandyBrown,
-                            )
+                        when {
+                            activeCheckout != null -> {
+                                IconButton(onClick = { ordersViewModel.dismissCheckout() }) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                        contentDescription = "Volver",
+                                        tint = BrandyBrown,
+                                    )
+                                }
+                            }
+                            selectedOrder != null -> {
+                                IconButton(onClick = { ordersViewModel.dismissOrderDetail() }) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                        contentDescription = "Volver",
+                                        tint = BrandyBrown,
+                                    )
+                                }
+                            }
+                            else -> {
+                                IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Menu,
+                                        contentDescription = "Menú",
+                                        tint = BrandyBrown,
+                                    )
+                                }
+                            }
                         }
                     },
                     actions = {
@@ -336,9 +484,24 @@ fun MainScaffold(
                     MainNavDestination.DASHBOARD -> {
                         DashboardScreen(
                             session = session,
-                            onNavigateToLoyalty = { phoneQuery ->
-                                loyaltyInitialPhone = phoneQuery
+                            viewModel = dashboardViewModel,
+                            onNavigateToLoyalty = {
                                 currentDestination = MainNavDestination.LOYALTY
+                            },
+                            onNavigateToTables = {
+                                currentDestination = MainNavDestination.TABLES
+                            },
+                            onNavigateToOrders = {
+                                currentDestination = MainNavDestination.ORDERS
+                            },
+                            onNavigateToCashRegister = {
+                                currentDestination = MainNavDestination.CASH_REGISTER
+                            },
+                            onNavigateToInventory = {
+                                currentDestination = MainNavDestination.INVENTORY
+                            },
+                            onNavigateToPayroll = {
+                                currentDestination = MainNavDestination.PAYROLL
                             },
                         )
                     }
@@ -352,6 +515,9 @@ fun MainScaffold(
                     }
                     MainNavDestination.INVENTORY -> {
                         InventoryScreen(viewModel = inventoryViewModel)
+                    }
+                    MainNavDestination.PROMOTIONS -> {
+                        PromotionsScreen(viewModel = promotionsViewModel)
                     }
                     MainNavDestination.EMPLOYEES -> {
                         EmployeesScreen(viewModel = employeesViewModel)
@@ -381,7 +547,12 @@ fun MainScaffold(
                         )
                     }
                     MainNavDestination.CASH_REGISTER -> {
-                        ModulePlaceholderScreen(title = currentDestination.title)
+                        CashRegisterScreen(
+                            viewModel = cashRegisterViewModel,
+                            onNavigateToOrders = {
+                                currentDestination = MainNavDestination.ORDERS
+                            },
+                        )
                     }
                 }
             }

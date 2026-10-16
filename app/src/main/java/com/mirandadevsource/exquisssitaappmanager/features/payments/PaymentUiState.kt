@@ -48,25 +48,81 @@ data class PaymentUiState(
     val successMessage: String? = null,
     val lastPaymentCommand: PaymentCommand? = null,
 ) {
-    /** Partidas de la orden que aún tienen saldo pendiente por pagar */
-    val pendingDetails: List<OrderDetail>
-        get() = details.filter { it.paymentStatus == PaymentLineStatus.PENDING }
-
     /** Total acumulado de la comanda en centavos (excluyendo partidas canceladas) */
     val totalOrderCents: Long
         get() = details
             .filter { it.paymentStatus != PaymentLineStatus.CANCELLED }
             .sumOf { it.lineTotalCents }
 
-    /** Monto ya cubierto en centavos según las partidas marcadas como pagadas */
-    val paidAmountCents: Long
-        get() = details
-            .filter { it.paymentStatus == PaymentLineStatus.PAID }
-            .sumOf { it.lineTotalCents }
+    /** Monto pagado histórico acumulado por una partida específica */
+    fun linePaidCents(detailId: String): Long {
+        val line = details.firstOrNull { it.id == detailId } ?: return 0L
+        if (line.paymentStatus == PaymentLineStatus.PAID) return line.lineTotalCents
+        val allocated = payments
+            .filter { it.status == PaymentStatus.CONFIRMED }
+            .flatMap { it.allocations }
+            .filter { it.orderDetailId == detailId }
+            .sumOf { it.amountCents }
+        return minOf(allocated, line.lineTotalCents)
+    }
 
-    /** Saldo restante pendiente de pago */
+    /** Saldo monetario pendiente de una partida específica */
+    fun linePendingCents(detailId: String): Long {
+        val line = details.firstOrNull { it.id == detailId } ?: return 0L
+        if (line.paymentStatus == PaymentLineStatus.CANCELLED) return 0L
+        return (line.lineTotalCents - linePaidCents(detailId)).coerceAtLeast(0L)
+    }
+
+    /** Cantidad de unidades físicas pendientes de pago para una partida */
+    fun lineRemainingQuantity(detailId: String): Int {
+        val line = details.firstOrNull { it.id == detailId } ?: return 0
+        if (line.paymentStatus == PaymentLineStatus.CANCELLED || line.paymentStatus == PaymentLineStatus.PAID) return 0
+        val pending = linePendingCents(detailId)
+        if (pending <= 0L || line.unitPriceCents <= 0L) return 0
+        val units = ((pending + line.unitPriceCents - 1) / line.unitPriceCents).toInt()
+        return units.coerceIn(0, line.quantity)
+    }
+
+    /** Unidades de stock ya deducidas para una partida */
+    fun lineStockAllocated(detailId: String): Int {
+        return payments
+            .filter { it.status == PaymentStatus.CONFIRMED }
+            .flatMap { it.allocations }
+            .filter { it.orderDetailId == detailId }
+            .sumOf { it.stockQuantity }
+    }
+
+    /** Unidades de stock pendientes de deducir (0 si el producto no controla inventario) */
+    fun lineRemainingStock(detailId: String): Int {
+        val line = details.firstOrNull { it.id == detailId } ?: return 0
+        val product = productMap[line.productId]
+        if (product?.controlaInventario != true) return 0
+        return (line.quantity - lineStockAllocated(detailId)).coerceAtLeast(0)
+    }
+
+    /** Monto ya cubierto en centavos considerando pagos confirmados y partidas pagadas */
+    val paidAmountCents: Long
+        get() {
+            val fromPayments = payments
+                .filter { it.status == PaymentStatus.CONFIRMED }
+                .sumOf { it.amountCents }
+            val fromLines = details
+                .filter { it.paymentStatus == PaymentLineStatus.PAID }
+                .sumOf { it.lineTotalCents }
+            return maxOf(fromPayments, fromLines).coerceAtMost(totalOrderCents)
+        }
+
+    /** Saldo restante pendiente de pago de la comanda */
     val pendingBalanceCents: Long
         get() = (totalOrderCents - paidAmountCents).coerceAtLeast(0L)
+
+    /** Partidas de la orden que aún tienen saldo monetario pendiente por liquidar */
+    val pendingDetails: List<OrderDetail>
+        get() = details.filter {
+            it.paymentStatus != PaymentLineStatus.CANCELLED &&
+                it.paymentStatus != PaymentLineStatus.PAID &&
+                linePendingCents(it.id) > 0L
+        }
 
     /** Indica si la orden ya no tiene saldo pendiente */
     val isFullyPaid: Boolean
@@ -80,8 +136,9 @@ data class PaymentUiState(
             SplitMode.FULL -> pendingBalanceCents
             SplitMode.BY_ITEMS -> {
                 pendingDetails.sumOf { item ->
-                    val qtyToPay = (selectedItemQuantities[item.id] ?: 0).coerceIn(0, item.quantity)
-                    qtyToPay.toLong() * item.unitPriceCents
+                    val maxQty = lineRemainingQuantity(item.id)
+                    val qtyToPay = (selectedItemQuantities[item.id] ?: 0).coerceIn(0, maxQty)
+                    minOf(qtyToPay.toLong() * item.unitPriceCents, linePendingCents(item.id))
                 }
             }
             SplitMode.EQUAL_SPLIT -> {

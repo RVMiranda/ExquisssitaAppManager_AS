@@ -3,6 +3,7 @@ package com.mirandadevsource.exquisssitaappmanager.features.orders
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderDetail
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderStatus
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.Payment
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentLineStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.ServiceType
@@ -42,8 +43,12 @@ data class OrderUiState(
     // Detalle / Inspección de comanda seleccionada
     val selectedOrderId: String? = null,
     val selectedOrderDetails: List<OrderDetail> = emptyList(),
+    val selectedOrderPayments: List<Payment> = emptyList(),
     val isLoadingOrderDetails: Boolean = false,
     val orderActionError: String? = null,
+
+    // Flujo de Cobro / Checkout activo
+    val activeCheckoutOrder: Order? = null,
 
     // Modal: Agregar ítem al pedido
     val isAddItemDialogOpen: Boolean = false,

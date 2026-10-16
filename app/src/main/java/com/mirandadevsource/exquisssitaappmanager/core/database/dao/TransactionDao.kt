@@ -23,6 +23,12 @@ interface TransactionDao {
     @Query("SELECT * FROM transaction_cache WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): TransactionEntity?
 
+    @Query("SELECT * FROM transaction_cache ORDER BY fecha DESC, id DESC")
+    fun observeAll(): Flow<List<TransactionEntity>>
+
+    @Query("SELECT * FROM transaction_cache ORDER BY fecha DESC, id DESC")
+    suspend fun getAll(): List<TransactionEntity>
+
     @Query("SELECT * FROM payment_detail_cache WHERE transaccionId IN (:transactionIds)")
     suspend fun getPaymentDetails(transactionIds: List<String>): List<PaymentDetailEntity>
 

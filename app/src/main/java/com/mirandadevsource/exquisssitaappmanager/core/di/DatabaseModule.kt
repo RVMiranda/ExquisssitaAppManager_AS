@@ -15,6 +15,8 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderDetailDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderCommandDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.TransactionDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.PromotionDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.DailyClosureDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -32,6 +34,8 @@ object DatabaseModule {
             .addMigrations(MIGRATION_1_2)
             .addMigrations(MIGRATION_2_3)
             .addMigrations(MIGRATION_3_4)
+            .addMigrations(MIGRATION_4_5)
+            .addMigrations(MIGRATION_5_6)
             .build()
 
     @Provides
@@ -63,6 +67,12 @@ object DatabaseModule {
 
     @Provides
     fun provideTransactionDao(database: AppDatabase): TransactionDao = database.transactionDao()
+
+    @Provides
+    fun providePromotionDao(database: AppDatabase): PromotionDao = database.promotionDao()
+
+    @Provides
+    fun provideDailyClosureDao(database: AppDatabase): DailyClosureDao = database.dailyClosureDao()
 
     private const val DATABASE_NAME = "exquisssita_manager.db"
 
@@ -173,6 +183,49 @@ object DatabaseModule {
             db.execSQL("""CREATE TABLE IF NOT EXISTS `order_command_outbox` (`idempotencyKey` TEXT NOT NULL, `actorUserId` TEXT NOT NULL, `aggregateId` TEXT NOT NULL, `entity` TEXT NOT NULL, `entityId` TEXT NOT NULL, `operation` TEXT NOT NULL, `payloadJson` TEXT NOT NULL, `expectedVersion` INTEGER, `status` TEXT NOT NULL, `attemptCount` INTEGER NOT NULL, `nextAttemptAtMillis` INTEGER, `createdAtMillis` INTEGER NOT NULL, `updatedAtMillis` INTEGER NOT NULL, `resultJson` TEXT, `lastErrorCode` TEXT, PRIMARY KEY(`idempotencyKey`))""")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_command_outbox_actorUserId_status_createdAtMillis` ON `order_command_outbox` (`actorUserId`, `status`, `createdAtMillis`)")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_order_command_outbox_aggregateId_createdAtMillis` ON `order_command_outbox` (`aggregateId`, `createdAtMillis`)")
+        }
+    }
+
+    private val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `promotion_cache` (
+                `id` TEXT NOT NULL,
+                `titulo` TEXT NOT NULL,
+                `descripcion` TEXT NOT NULL,
+                `terminosCondiciones` TEXT,
+                `imagenUrl` TEXT,
+                `fechaPublicacion` TEXT NOT NULL,
+                `fechaVencimiento` TEXT,
+                `activo` INTEGER NOT NULL,
+                `createdAt` TEXT NOT NULL,
+                `updatedAt` TEXT NOT NULL,
+                `syncVersion` INTEGER NOT NULL,
+                `cachedAtMillis` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )""")
+        }
+    }
+
+    private val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `cash_cut_cache` (
+                `id` TEXT NOT NULL,
+                `businessDate` TEXT NOT NULL,
+                `cutNumber` INTEGER NOT NULL,
+                `periodStart` TEXT NOT NULL,
+                `periodEnd` TEXT NOT NULL,
+                `cashCents` INTEGER NOT NULL,
+                `cardCents` INTEGER NOT NULL,
+                `otherCents` INTEGER NOT NULL,
+                `totalCents` INTEGER NOT NULL,
+                `closedOrderCount` INTEGER NOT NULL,
+                `closedAt` TEXT NOT NULL,
+                `closedBy` TEXT,
+                `syncVersion` INTEGER NOT NULL,
+                `cachedAtMillis` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )""")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_cash_cut_cache_businessDate_cutNumber` ON `cash_cut_cache` (`businessDate`, `cutNumber`)")
         }
     }
 }
