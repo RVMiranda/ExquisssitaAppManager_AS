@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "payroll_record_cache",
     indices = [
-        Index(value = ["remoteId"], unique = true),
+        Index(value = ["remoteId", "cacheActorUserId"], unique = true),
         Index(value = ["empleadoIdRemote", "periodoInicio"]),
         Index(value = ["employeeLocalId"]),
     ],
@@ -15,6 +15,8 @@ import androidx.room.PrimaryKey
 data class PayrollRecordEntity(
     @PrimaryKey val localId: String,
     val remoteId: String,
+    /** Actor-scoped copy of sensitive payroll data; null for legacy cache rows. */
+    val cacheActorUserId: String? = null,
     val employeeLocalId: String?,
     val empleadoIdRemote: String,
     val montoCents: Long,

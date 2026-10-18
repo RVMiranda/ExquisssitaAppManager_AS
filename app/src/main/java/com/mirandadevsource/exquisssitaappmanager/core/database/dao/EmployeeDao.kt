@@ -9,19 +9,22 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.E
 @Dao
 interface EmployeeDao {
     @Query(
-        "SELECT * FROM employee_cache WHERE (:includeInactive = 1 OR activo = 1) " +
+            "SELECT * FROM employee_cache WHERE cacheActorUserId = :actorUserId AND (:includeInactive = 1 OR activo = 1) " +
             "ORDER BY nombre COLLATE NOCASE, apellido COLLATE NOCASE",
     )
-    suspend fun getEmployees(includeInactive: Boolean): List<EmployeeEntity>
+    suspend fun getEmployees(actorUserId: String, includeInactive: Boolean): List<EmployeeEntity>
+
+    @Query("SELECT * FROM employee_cache WHERE cacheActorUserId = :actorUserId AND (:includeInactive = 1 OR activo = 1) ORDER BY nombre COLLATE NOCASE, apellido COLLATE NOCASE LIMIT :limit OFFSET :offset")
+    suspend fun getEmployeePage(actorUserId: String, includeInactive: Boolean, limit: Int, offset: Int): List<EmployeeEntity>
 
     @Query("SELECT * FROM employee_cache WHERE localId = :id LIMIT 1")
     suspend fun getByLocalId(id: String): EmployeeEntity?
 
-    @Query("SELECT * FROM employee_cache WHERE remoteId = :id LIMIT 1")
-    suspend fun getByRemoteId(id: String): EmployeeEntity?
+    @Query("SELECT * FROM employee_cache WHERE remoteId = :id AND cacheActorUserId = :actorUserId LIMIT 1")
+    suspend fun getByRemoteId(id: String, actorUserId: String): EmployeeEntity?
 
-    @Query("SELECT * FROM employee_cache WHERE syncState IN ('PENDING_UPDATE', 'SYNC_ERROR') ORDER BY localUpdatedAtMillis")
-    suspend fun getPendingUpdates(): List<EmployeeEntity>
+    @Query("SELECT * FROM employee_cache WHERE syncState IN ('PENDING_UPDATE', 'SYNC_ERROR') AND cacheActorUserId = :actorUserId AND updateActorUserId = :actorUserId ORDER BY localUpdatedAtMillis")
+    suspend fun getPendingUpdates(actorUserId: String): List<EmployeeEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(employee: EmployeeEntity)

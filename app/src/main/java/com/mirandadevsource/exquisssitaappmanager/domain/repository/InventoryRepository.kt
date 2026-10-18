@@ -4,10 +4,15 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.InventoryCommand
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.RegisterInventoryMovement
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.StockMovement
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.DataPage
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.pageFromCompleteList
 import kotlinx.coroutines.flow.Flow
 
 interface InventoryRepository {
     suspend fun getProducts(includeInactive: Boolean = false): Result<List<Product>>
+    suspend fun getProductPage(includeInactive: Boolean = false, page: PageRequest = PageRequest()): Result<DataPage<Product>> =
+        getProducts(includeInactive).map { pageFromCompleteList(it, page, "products:${if (includeInactive) "all" else "active"}") }
 
     suspend fun createProduct(
         nombre: String,

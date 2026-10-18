@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Schedule
@@ -38,6 +40,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.EmployeePayment
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentSyncStatus
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -180,6 +184,7 @@ fun PayrollScreen(
                             PayrollEmployeeItemCard(
                                 item = payrollItem,
                                 onRegisterPayment = { viewModel.openPaymentModal(payrollItem) },
+                                onViewHistory = { viewModel.openHistoryModal(payrollItem) },
                             )
                         }
                     }
@@ -199,6 +204,20 @@ fun PayrollScreen(
                 onNotesChange = { viewModel.updatePaymentNotes(it) },
                 onConfirm = { viewModel.confirmPayment() },
                 onDismiss = { viewModel.closePaymentModal() },
+            )
+        }
+
+        // Modal de Historial de Pagos Paginado
+        state.viewingHistoryEmployee?.let { historyItem ->
+            PayrollHistoryDialog(
+                item = historyItem,
+                payments = state.historyPayments,
+                isLoading = state.isLoadingHistory,
+                isLoadingPage = state.isLoadingHistoryPage,
+                hasMore = state.historyHasMore,
+                errorMessage = state.historyError,
+                onLoadMore = { viewModel.loadNextHistoryPage() },
+                onDismiss = { viewModel.closeHistoryModal() },
             )
         }
     }
@@ -391,6 +410,7 @@ private fun PayrollSummaryHeroCard(
 private fun PayrollEmployeeItemCard(
     item: WeeklyPayrollItem,
     onRegisterPayment: () -> Unit,
+    onViewHistory: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -510,27 +530,6 @@ private fun PayrollEmployeeItemCard(
                             color = ChocolateFondant,
                         )
                     }
-                } else {
-                    // Botón para Registrar Pago (Flat)
-                    Button(
-                        onClick = onRegisterPayment,
-                        shape = RoundedCornerShape(6.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandyBrown),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Payments,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "Registrar Pago",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
                 }
             }
 
@@ -556,6 +555,54 @@ private fun PayrollEmployeeItemCard(
                             text = notas,
                             style = MaterialTheme.typography.bodySmall,
                             color = ChocolateFondant.copy(alpha = 0.8f),
+                        )
+                    }
+                }
+            }
+
+            // Acciones: Historial y Registrar Pago
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(
+                    onClick = onViewHistory,
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, ApricotIllusion),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ChocolateFondant),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.History,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "Historial",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+
+                if (!item.isPaid) {
+                    Button(
+                        onClick = onRegisterPayment,
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandyBrown),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Payments,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Registrar Pago",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
                         )
                     }
                 }
@@ -703,6 +750,210 @@ private fun RegisterPaymentDialog(
                             Text("Confirmar", fontWeight = FontWeight.Bold)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PayrollHistoryDialog(
+    item: WeeklyPayrollItem,
+    payments: List<EmployeePayment>,
+    isLoading: Boolean,
+    isLoadingPage: Boolean,
+    hasMore: Boolean,
+    errorMessage: String?,
+    onLoadMore: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = VanillaCustard,
+            border = BorderStroke(1.dp, ApricotIllusion),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // Título
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Historial de Pagos",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = BrandyBrown,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            text = item.employee.fullName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = ChocolateFondant,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "Cerrar",
+                            tint = ChocolateFondant,
+                        )
+                    }
+                }
+
+                errorMessage?.let { error ->
+                    FeedbackBanner(message = error, isError = true, onDismiss = {})
+                }
+
+                if (isLoading && payments.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(color = BrandyBrown)
+                    }
+                } else if (payments.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "No se encontraron registros de nómina para este empleado.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = ChocolateFondant.copy(alpha = 0.6f),
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 380.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(payments, key = { it.id }) { payment ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = VanillaCustard),
+                                border = BorderStroke(1.dp, ApricotIllusion.copy(alpha = 0.7f)),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            text = formatPesos(payment.montoCents),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BrandyBrown,
+                                        )
+                                        if (payment.syncStatus == PaymentSyncStatus.PENDING_SYNC) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = OfflineAmber.copy(alpha = 0.15f),
+                                            ) {
+                                                Text(
+                                                    text = "Pendiente sync",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = OfflineAmber,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    payment.periodoInicio?.let { periodo ->
+                                        Text(
+                                            text = "Periodo inicio: $periodo",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = ChocolateFondant.copy(alpha = 0.7f),
+                                        )
+                                    }
+
+                                    payment.fechaPago?.let { fecha ->
+                                        Text(
+                                            text = "Fecha pagado: $fecha",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = ChocolateFondant.copy(alpha = 0.7f),
+                                        )
+                                    }
+
+                                    payment.notas?.let { notas ->
+                                        Text(
+                                            text = "Notas: $notas",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = ChocolateFondant.copy(alpha = 0.85f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isLoadingPage) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = BrandyBrown,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                            }
+                        } else if (hasMore) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(4.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    OutlinedButton(
+                                        onClick = onLoadMore,
+                                        border = BorderStroke(1.dp, BrandyBrown),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandyBrown),
+                                    ) {
+                                        Text("Cargar más registros")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, BrandyBrown),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandyBrown),
+                ) {
+                    Text("Cerrar")
                 }
             }
         }

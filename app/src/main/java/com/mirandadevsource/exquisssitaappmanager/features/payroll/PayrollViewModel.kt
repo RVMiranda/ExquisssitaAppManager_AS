@@ -2,7 +2,9 @@ package com.mirandadevsource.exquisssitaappmanager.features.payroll
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.WeeklyPayrollItem
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.PayrollRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.payroll.GetWeeklyPayrollStatusUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.payroll.RegisterPayrollPaymentUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -18,6 +20,7 @@ import javax.inject.Inject
 class PayrollViewModel @Inject constructor(
     private val getWeeklyPayrollStatusUseCase: GetWeeklyPayrollStatusUseCase,
     private val registerPayrollPaymentUseCase: RegisterPayrollPaymentUseCase,
+    private val payrollRepository: PayrollRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PayrollUiState())
@@ -117,6 +120,96 @@ class PayrollViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    fun openHistoryModal(item: WeeklyPayrollItem) {
+        _uiState.update {
+            it.copy(
+                viewingHistoryEmployee = item,
+                historyPayments = emptyList(),
+                isLoadingHistory = true,
+                isLoadingHistoryPage = false,
+                historyHasMore = false,
+                historyNextOffset = null,
+                historyFetchedAt = null,
+                historyError = null,
+            )
+        }
+        loadHistory(item.employee.id, offset = 0)
+    }
+
+    fun closeHistoryModal() {
+        _uiState.update {
+            it.copy(
+                viewingHistoryEmployee = null,
+                historyPayments = emptyList(),
+                isLoadingHistory = false,
+                isLoadingHistoryPage = false,
+                historyHasMore = false,
+                historyNextOffset = null,
+                historyError = null,
+            )
+        }
+    }
+
+    fun loadNextHistoryPage() {
+        val state = _uiState.value
+        val employee = state.viewingHistoryEmployee ?: return
+        val offset = state.historyNextOffset ?: return
+        if (!state.historyHasMore || state.isLoadingHistoryPage || state.isLoadingHistory) return
+
+        _uiState.update { it.copy(isLoadingHistoryPage = true) }
+        viewModelScope.launch {
+            val request = PageRequest(offset = offset, limit = 50)
+            payrollRepository.getPaymentHistoryPage(employee.employee.id, request)
+                .onSuccess { dataPage ->
+                    _uiState.update { current ->
+                        val existingIds = current.historyPayments.map { it.id }.toSet()
+                        val newItems = dataPage.items.filterNot { existingIds.contains(it.id) }
+                        current.copy(
+                            isLoadingHistoryPage = false,
+                            historyPayments = current.historyPayments + newItems,
+                            historyHasMore = dataPage.hasMore,
+                            historyNextOffset = dataPage.nextOffset,
+                            historyFetchedAt = dataPage.fetchedAt ?: current.historyFetchedAt,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingHistoryPage = false,
+                            historyError = error.localizedMessage ?: "Error al cargar más historial.",
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadHistory(employeeId: String, offset: Int) {
+        viewModelScope.launch {
+            val request = PageRequest(offset = offset, limit = 50)
+            payrollRepository.getPaymentHistoryPage(employeeId, request)
+                .onSuccess { dataPage ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingHistory = false,
+                            historyPayments = dataPage.items,
+                            historyHasMore = dataPage.hasMore,
+                            historyNextOffset = dataPage.nextOffset,
+                            historyFetchedAt = dataPage.fetchedAt,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingHistory = false,
+                            historyError = error.localizedMessage ?: "Error al cargar el historial de pagos.",
+                        )
+                    }
+                }
         }
     }
 

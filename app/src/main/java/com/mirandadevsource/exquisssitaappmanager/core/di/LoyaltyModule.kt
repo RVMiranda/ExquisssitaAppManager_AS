@@ -1,7 +1,9 @@
 package com.mirandadevsource.exquisssitaappmanager.core.di
 
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.CustomerCacheDao
 import com.mirandadevsource.exquisssitaappmanager.data.repository.LoyaltyRepositoryImpl
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.LoyaltyRepository
 import dagger.Module
 import dagger.Provides
@@ -18,5 +20,12 @@ object LoyaltyModule {
     fun provideLoyaltyRepository(
         supabaseClient: SupabaseClient,
         networkMonitor: NetworkMonitor,
-    ): LoyaltyRepository = LoyaltyRepositoryImpl(supabaseClient, networkMonitor)
+        authRepository: AuthRepository,
+        customerCacheDao: CustomerCacheDao,
+    ): LoyaltyRepository = LoyaltyRepositoryImpl(
+        supabaseClient,
+        networkMonitor,
+        authRepository,
+        customerCacheDao,
+    )
 }

@@ -33,10 +33,11 @@ import javax.inject.Inject
 
 class PaymentRepositoryImpl @Inject constructor(
     supabase: SupabaseClient, networkMonitor: NetworkMonitor, commandDao: OrderCommandDao,
+    leaseDao: SyncExecutionLeaseDao,
     authRepository: AuthRepository, private val database: AppDatabase,
     private val transactionDao: TransactionDao, private val detailDao: OrderDetailDao,
     private val orderDao: OrderDao, private val productDao: ProductDao,
-) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository), PaymentRepository {
+) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository, leaseDao), PaymentRepository {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun observePayments(orderId: String): Flow<List<Payment>> = authRepository.state.flatMapLatest { state ->
@@ -128,8 +129,6 @@ class PaymentRepositoryImpl @Inject constructor(
     }
 
     override suspend fun syncPendingPayments(): Result<Unit> {
-        val syncResult = syncActorCommands()
-        if (syncResult.isFailure) return syncResult
         val paymentSyncResult = syncActorCommands(includePayments = true)
         if (paymentSyncResult.isFailure) return paymentSyncResult
         val actor = actorId() ?: return Result.success(Unit)

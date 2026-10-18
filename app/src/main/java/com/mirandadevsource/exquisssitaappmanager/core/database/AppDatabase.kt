@@ -28,7 +28,11 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.P
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.OrderCommandEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.PromotionEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.DailyClosureDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.CustomerCacheDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.SyncExecutionLeaseDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.DailyClosureEntity
+import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.CustomerCacheEntity
+import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.SyncExecutionLeaseEntity
 
 @Database(
     entities = [
@@ -47,8 +51,10 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.D
         OrderCommandEntity::class,
         PromotionEntity::class,
         DailyClosureEntity::class,
+        CustomerCacheEntity::class,
+        SyncExecutionLeaseEntity::class,
     ],
-    version = 6,
+    version = 9,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -64,4 +70,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun promotionDao(): PromotionDao
     abstract fun dailyClosureDao(): DailyClosureDao
+    abstract fun customerCacheDao(): CustomerCacheDao
+    abstract fun syncExecutionLeaseDao(): SyncExecutionLeaseDao
 }

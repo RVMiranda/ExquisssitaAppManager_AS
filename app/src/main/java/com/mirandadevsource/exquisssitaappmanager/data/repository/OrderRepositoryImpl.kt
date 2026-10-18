@@ -15,6 +15,7 @@ import com.mirandadevsource.exquisssitaappmanager.domain.repository.OrderReposit
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order as PostgrestOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -30,11 +31,12 @@ import javax.inject.Inject
 @OptIn(ExperimentalCoroutinesApi::class)
 class OrderRepositoryImpl @Inject constructor(
     supabase: SupabaseClient, networkMonitor: NetworkMonitor, commandDao: OrderCommandDao,
+    leaseDao: SyncExecutionLeaseDao,
     authRepository: AuthRepository, private val database: AppDatabase,
     private val orderDao: OrderDao, private val detailDao: OrderDetailDao,
     private val tableDao: TableDao, private val transactionDao: TransactionDao,
     private val productDao: ProductDao,
-) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository), OrderRepository {
+) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository, leaseDao), OrderRepository {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeOrders(): Flow<List<Order>> = authRepository.state.flatMapLatest { state ->
@@ -59,21 +61,96 @@ class OrderRepositoryImpl @Inject constructor(
         if (!networkMonitor.isOnline() || !hasRemoteSession()) return Result.success(Unit)
         return try {
             syncActorCommands()
-            val orders = supabase.from(ORDERS).select(columns = ORDER_COLUMNS).decodeList<OrderDto>()
-            val details = supabase.from(DETAILS).select(columns = DETAIL_COLUMNS).decodeList<OrderDetailDto>()
-            val remoteOrderIds = orders.mapTo(hashSetOf()) { it.id }
-            val remoteDetailIds = details.mapTo(hashSetOf()) { it.id }
+            // The Data API may cap each response. Build complete snapshots before touching Room;
+            // a partial page must never make valid cached rows look deleted.
+            val orders = fetchAllOrders()
+            val details = fetchAllOrderDetails()
             database.withTransaction {
-                orderDao.getAllForActor(actor).filter { it.syncState == OrderEntity.PENDING && it.id !in remoteOrderIds && commandDao.countPendingForEntity(actor, it.id) == 0 }
-                    .forEach { orderDao.deleteById(it.id); detailDao.deleteForOrder(it.id) }
-                detailDao.getForActor(actor).filter { it.id !in remoteDetailIds && commandDao.countPendingForEntity(actor, it.id) == 0 }
-                    .forEach { detailDao.deleteById(it.id) }
+                // A missing row in an offset-paginated response is not an explicit delete.
+                // Deletes/cancellations must be reconciled by their command or server status.
                 orders.forEach { dto -> if (commandDao.countPendingForEntity(actor, dto.id) == 0) orderDao.upsert(dto.toEntity(actor)) }
                 details.forEach { dto -> if (commandDao.countPendingForEntity(actor, dto.id) == 0) detailDao.upsert(dto.toEntity()) }
             }
             Result.success(Unit)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { if (failure.isNetworkFailure()) Result.success(Unit) else Result.failure(failure) }
+    }
+
+    override suspend fun getOrderPage(filter: OrderPageFilter, page: PageRequest): Result<DataPage<Order>> {
+        val session = (authRepository.state.value as? AuthState.SignedIn)?.session
+            ?: return Result.failure(SecurityException("Se requiere una sesión activa para consultar órdenes."))
+        val actor = session.userId
+        val from = filter.fromInclusive?.toString()
+        val to = filter.toExclusive?.toString()
+        val scope = filter.scope()
+        if (!networkMonitor.isOnline() || session.isOffline) {
+            return readOrderPage(actor, filter, page, scope)
+        }
+        if (!hasRemoteSession()) {
+            return Result.failure(SecurityException("La sesión remota no coincide con el usuario activo."))
+        }
+        return try {
+            val remote = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) {
+                filter {
+                    if (filter.openOnly) eq("estado", OrderStatus.OPEN.databaseValue)
+                    from?.let { gte("fecha_apertura", it) }
+                    to?.let { lt("fecha_apertura", it) }
+                }
+                order("fecha_apertura", PostgrestOrder.DESCENDING)
+                order("id", PostgrestOrder.DESCENDING)
+                range(page.offset.toLong()..(page.offset + page.limit).toLong())
+            }.decodeList<OrderDto>()
+            if (actorId() != actor || !hasRemoteSession()) {
+                return Result.failure(SecurityException("La sesión cambió durante la consulta; vuelve a cargar las órdenes."))
+            }
+            database.withTransaction {
+                remote.forEach { dto ->
+                    val existing = orderDao.getById(dto.id)
+                    // The current Room primary key is the remote id, not (id, actor).
+                    // Never overwrite another actor's row; that account can still use the
+                    // authoritative response for this request, but it won't be cached here.
+                    if (existing == null || (existing.actorUserId == actor &&
+                            existing.syncState == OrderEntity.SYNCED &&
+                            commandDao.countPendingForEntity(actor, dto.id) == 0)
+                    ) {
+                        orderDao.upsert(dto.toEntity(actor))
+                    }
+                }
+            }
+            val visibleRows = remote.map { dto ->
+                val existing = orderDao.getById(dto.id)
+                existing?.takeIf { it.actorUserId == actor && it.syncState != OrderEntity.SYNCED }
+                    ?.toDomain()
+                    ?: dto.toEntity(actor).toDomain()
+            }
+            Result.success(pageFromFetchedWindow(visibleRows, page, scope))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            if (failure.isNetworkFailure()) readOrderPage(actor, filter, page, scope) else Result.failure(failure)
+        }
+    }
+
+    private suspend fun readOrderPage(
+        actor: String,
+        filter: OrderPageFilter,
+        page: PageRequest,
+        scope: String,
+    ): Result<DataPage<Order>> = try {
+        val rows = orderDao.getPage(
+            actorId = actor,
+            openOnly = filter.openOnly,
+            fromInclusive = filter.fromInclusive?.toString(),
+            toExclusive = filter.toExclusive?.toString(),
+            limit = page.limit + 1,
+            offset = page.offset,
+        )
+        val oldestFetch = rows.minOfOrNull { it.cachedAtMillis }?.let(Instant::ofEpochMilli)
+        Result.success(pageFromFetchedWindow(rows.map { it.toDomain() }, page, scope, oldestFetch))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        Result.failure(failure)
     }
 
     override suspend fun openOrder(request: OpenOrderRequest): Result<String> {
@@ -166,7 +243,36 @@ class OrderRepositoryImpl @Inject constructor(
         catch (failure: Exception) { Result.failure(failure) }
     }
 
+    private suspend fun fetchAllOrders(): List<OrderDto> {
+        val rows = mutableListOf<OrderDto>()
+        var offset = 0L
+        while (true) {
+            val page = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) {
+                order("id", PostgrestOrder.ASCENDING)
+                range(offset..(offset + SNAPSHOT_PAGE_SIZE - 1))
+            }.decodeList<OrderDto>()
+            rows += page
+            if (page.size.toLong() < SNAPSHOT_PAGE_SIZE) return rows
+            offset += SNAPSHOT_PAGE_SIZE
+        }
+    }
+
+    private suspend fun fetchAllOrderDetails(): List<OrderDetailDto> {
+        val rows = mutableListOf<OrderDetailDto>()
+        var offset = 0L
+        while (true) {
+            val page = supabase.from(DETAILS).select(columns = DETAIL_COLUMNS) {
+                order("id", PostgrestOrder.ASCENDING)
+                range(offset..(offset + SNAPSHOT_PAGE_SIZE - 1))
+            }.decodeList<OrderDetailDto>()
+            rows += page
+            if (page.size.toLong() < SNAPSHOT_PAGE_SIZE) return rows
+            offset += SNAPSHOT_PAGE_SIZE
+        }
+    }
+
     private companion object {
+        const val SNAPSHOT_PAGE_SIZE = 500L
         const val ORDERS = "ordenes"; const val DETAILS = "detalle_orden"
         val ORDER_COLUMNS = Columns.list("id, mesa_id, cliente_id, tipo_servicio, estado, fecha_apertura, fecha_cierre, notas, created_at, updated_at, sync_version")
         val DETAIL_COLUMNS = Columns.list("id, orden_id, producto_id, cantidad, precio_unitario, estado_pago, notas, created_at, updated_at, sync_version")

@@ -7,6 +7,7 @@
 
 > **Estado de verificación (2026-10-12):** Supabase CLI `2.120.0` confirmó que las 22 migraciones locales y remotas están emparejadas, hasta `20261012024548_fix_orders_staff_access_and_multiple_open_orders.sql`. La migración corrigió acceso de mesas/órdenes/pagos para `admin` y `gerente` activo, revocó acceso anónimo y DML directo, y retiró el índice que impedía varias órdenes abiertas por mesa. El diff global `db diff --linked` sigue pendiente porque Docker Desktop no tiene disponible el motor Linux. Las cuentas gerente se asignarán después, cuando estén creadas.
 > **Actualización (2026-10-13):** Se aplicó `20261013212639_cash_register_period_cuts.sql`; las 27 migraciones locales/remotas están emparejadas. El detalle del corte está en la sección 9.
+> **Actualización Release 03 (2026-10-17):** auditoría CLI de solo lectura confirma 27 migraciones remotas/locales emparejadas y PostgreSQL 17.6. Tres migraciones correctivas se redactaron localmente (`20261017205614`–`20261017205843`); están **pendientes de prueba aislada e integración remota**. No afirmar que el remoto ya tiene esos permisos/RPC. Informe: `docs/release-03-seguridad-backend.md`.
 > Los fragmentos de `CREATE TABLE` de esta sección resumen columnas/tipos/defaults; no pretenden reproducir todas las PK, FK, constraints, grants o políticas. Consultar la migración remota correspondiente antes de inferir esas reglas.
 
 ---
@@ -573,3 +574,48 @@ Se implementó y desplegó `20261013212639_cash_register_period_cuts.sql`. `cort
 La revisión remota encontró dos órdenes abiertas, por lo que no se disparó una operación financiera real. No había cortes ni filas `venta_diaria` previos al despliegue. La tabla y funciones quedaron instaladas; las migraciones local/remoto están emparejadas hasta `20261013212639`.
 
 En Android, el paquete de datos ahora define `DailyClosure` y `CashRegisterDaySummary`, repositorio de creación/lectura, DTO y mapeo, outbox idempotente, caché Room v6 y binding Hilt. La compilación Kotlin quedó pendiente porque Gradle falla al crear la conexión loopback del daemon, incluso con el JBR de Android Studio. No se ejecutaron pruebas unitarias ni una RPC de corte sobre producción.
+
+## 10. Contrato Release 03 — seguridad, perfiles cliente y operaciones atómicas (2026-10-17)
+
+### Estado
+
+La auditoría remota confirmó que las 27 migraciones anteriores están sincronizadas. Encontró privilegios excesivos en `clientes` (incluyendo `TRUNCATE` y `MAINTAIN` para `anon`/`authenticated`), feed histórico con `qr_token_hash`, trigger que asigna `empleado` en cada signup Auth, y `registrar_visita_qr` sin permiso para `gerente`. No había clientes ni visitas, así que no hay saldos de lealtad que reconciliar; había tres empleados con `user_id` y ningún vínculo duplicado. Release 03 añade migraciones locales; hasta que se prueben y desplieguen, las reglas de esta sección son el contrato deseado y no describen todavía el remoto.
+
+### Perfiles y Auth de clientes
+
+- El signup público sigue habilitado para la aplicación de clientes; el acceso anónimo sigue deshabilitado. El trigger `on_auth_user_created_set_role` deja de asignar rol operativo. Personal administrador/gerente se aprovisiona por el flujo administrativo confiable.
+- Un perfil cliente se crea con `ensure_customer_profile(p_nombre, p_telefono)` después de confirmar el correo. La función es idempotente por `auth.uid()`; nunca vincula perfiles por teléfono. `clientes.user_id` tendrá índice único parcial tras la comprobación de duplicados.
+- `update_customer_profile` permite al titular cambiar solo nombre y teléfono. Balance, visitas, identidad, QR y versión no son editables mediante tabla o `sync_execute`.
+- `rotate_customer_qr_token()` emite un token aleatorio opaco de 256 bits; entrega el valor una sola vez y guarda SHA-256. Una nueva emisión revoca el QR anterior. El hash no se concede por SELECT y se filtra tanto en capturas nuevas como en páginas históricas de `sync_pull`.
+- El cliente solo lee su perfil, visitas, ledger y canjes. Los operadores `admin`/`gerente` leen el directorio operativo y registran visitas/canjes en línea. QR no acredita visitas ni canjes sin conexión.
+
+### Nómina y empleados
+
+- Un perfil `empleados.user_id IS NULL` es personal de piso sin identidad de operador. El vínculo `user_id` no es editable por clientes ni por la sincronización genérica. Un vínculo de operador, incluso inactivo, queda protegido ante el gerente.
+- `update_floor_employee_salary(p_empleado_id, p_salario, p_expected_version)` bloquea el registro y valida versión en una transacción. `admin` puede administrar; `gerente` solo modifica salario en filas de piso sin vínculo Auth. El gerente no cambia salarios de perfiles vinculados ni usa `sync_execute` para editar el directorio.
+- `registrar_pago_nomina` conserva la cuota semanal en centavos desde el perfil bloqueado, requiere empleado activo y deja idempotencia semanal en el índice existente. Ninguna operación cambia el historial previo.
+
+### Órdenes, precios y agregados
+
+- Al insertar una nueva partida con `sync_execute_v2`, la base lee el precio de `productos` bajo `FOR SHARE`, exige producto activo y compara el importe enviado con el precio canónico en centavos. Un precio offline obsoleto devuelve `price_changed` con el valor actual en el detalle del error; la app no cobra un importe revalorizado silenciosamente.
+- El precio de una partida existente es histórico: `precio_unitario` y `producto_id` no se pueden reescribir por UPDATE genérico. Cambiar producto implica cancelar una partida todavía no pagada y crear otra con precio vigente.
+- `order_financial_snapshot(p_order_id)` devuelve orden, partidas, transacciones, total, pagado y saldo pendiente en una sola lectura de base de datos. `daily_sales_summary(p_business_date)` agrupa pagos por fecha de negocio CDMX y método. Ambos requieren rol de operador activo.
+- Se agregan índices de estado/fecha de órdenes, partidas por orden, transacciones por fecha/orden y búsqueda de clientes por nombre/teléfono.
+
+### Lealtad y canjes
+
+- `puntos_movimientos` es el ledger append-only. `clientes.puntos_lealtad` es caché derivada: una entrada positiva `apertura` reconcilia saldos que existían antes del ledger; nuevas visitas acreditan 10 puntos mediante `registrar_visita_qr`, y los canjes descuentan el costo almacenado en `recompensas`.
+- La visita queda limitada a una por cuenta cliente y fecha CDMX. Se acepta `admin` o `gerente` activo y se exige cuenta cliente verificada, vinculada y token QR vigente. Idempotencia/concurrencia se resuelven en PostgreSQL.
+- Solo `admin` gestiona recompensas con `manage_loyalty_reward` y `expectedVersion`, y ejecuta ajustes de saldo trazados con `adjust_loyalty_points` e idempotency key. `redeem_loyalty_reward` valida QR, recompensa activa, costo de servidor y saldo bajo bloqueo. El catálogo representa recompensas en puntos, no descuentos monetarios ni devoluciones de órdenes.
+
+### Sesiones y configuración
+
+`supabase/config.toml` local conserva signup email de clientes, deshabilita sesiones anónimas, requiere confirmación y contraseñas de al menos 8 caracteres, y simula timebox Auth de 10 horas. Esto **no aplica esos valores al proyecto remoto**. Antes del piloto, configurar en Auth remoto confirmación, contraseñas, redirect URLs exactos de la app cliente y límites de envío/autenticación; la app Manager mantiene su propio límite local de 10 horas.
+
+### Migraciones nuevas (locales, no desplegadas)
+
+1. `20261017205614_release03_security_auth_loyalty_payroll_orders.sql` — ACL, perfiles, feed sanitizado, signup/roles.
+2. `20261017205743_release03_payroll_and_order_price_guards.sql` — salarios/nómina, precio canónico, snapshots e índices.
+3. `20261017205843_release03_loyalty_ledger_customer_profiles_rewards.sql` — perfil/QR cliente, ledger, visitas y canjes.
+
+La prueba `supabase/tests/release03_security_acl.test.sql` comprueba ACL esenciales. No se debe usar `db push --linked` hasta que las migraciones pasen una reconstrucción local con Docker, pruebas SQL y revisión del informe ACL antes/después.

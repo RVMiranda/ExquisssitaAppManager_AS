@@ -16,6 +16,9 @@ data class Employee(
     val createdAt: String,
     val updatedAt: String,
     val syncVersion: Long = 1L,
+    val syncState: String = "SYNCED",
+    val syncError: String? = null,
+    val conflictSnapshot: EmployeeConflictSnapshot? = null,
 ) {
     val fullName: String get() = "$nombre $apellido".trim()
     /** Exact decimal pesos; do not use binary floating point for money. */
@@ -26,3 +29,14 @@ data class Employee(
         val WEEKDAYS = listOf("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
     }
 }
+
+data class EmployeeConflictSnapshot(
+    val nombre: String,
+    val apellido: String,
+    val telefono: String?,
+    val salarioCents: Long,
+    val diaPago: Int,
+    val activo: Boolean,
+    val syncVersion: Long,
+    val updatedAt: String,
+)

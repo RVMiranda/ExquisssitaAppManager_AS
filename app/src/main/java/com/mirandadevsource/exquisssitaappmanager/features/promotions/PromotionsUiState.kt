@@ -20,6 +20,10 @@ data class PromotionsUiState(
     val promotions: List<Promotion> = emptyList(),
     val searchQuery: String = "",
     val selectedFilter: PromotionFilter = PromotionFilter.TODAS,
+    val isLoadingPage: Boolean = false,
+    val hasMore: Boolean = false,
+    val nextOffset: Int? = null,
+    val pageFetchedAt: java.time.Instant? = null,
     // Dialog / Form States
     val isFormDialogOpen: Boolean = false,
     val editingPromotion: Promotion? = null,

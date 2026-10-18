@@ -1,8 +1,9 @@
 package com.mirandadevsource.exquisssitaappmanager.domain.repository
 
-import com.mirandadevsource.exquisssitaappmanager.domain.entity.CreatedCustomer
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Customer
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.CustomerVisit
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.LoyaltyReward
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.RewardRedemption
 
 interface LoyaltyRepository {
     /** [qrPayload] is the raw token scanned from the customer's QR. */
@@ -13,6 +14,23 @@ interface LoyaltyRepository {
     /** Records at most one visit per customer and Mexico City business date. */
     suspend fun registerDailyVisit(qrPayload: String): Result<CustomerVisit>
 
-    /** The returned QR payload is shown once; only its SHA-256 digest is stored remotely. */
-    suspend fun createCustomer(name: String, phone: String?): Result<CreatedCustomer>
+    suspend fun getRewards(includeInactive: Boolean = false): Result<List<LoyaltyReward>>
+
+    /** Only admin may create or update rewards; the backend validates role and expected version. */
+    suspend fun manageReward(
+        rewardId: String,
+        title: String,
+        description: String,
+        pointsCost: Int,
+        active: Boolean,
+        expectedVersion: Long,
+    ): Result<LoyaltyReward>
+
+    /** Keep [idempotencyKey] stable when retrying an uncertain request. */
+    suspend fun redeemReward(
+        qrPayload: String,
+        rewardId: String,
+        idempotencyKey: String,
+    ): Result<RewardRedemption>
+
 }

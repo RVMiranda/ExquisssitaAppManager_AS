@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Promotion
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.PromotionsRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.promotions.CreatePromotionUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.promotions.GetPromotionsUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.promotions.SetPromotionActiveUseCase
@@ -23,6 +25,7 @@ class PromotionsViewModel @Inject constructor(
     private val createPromotionUseCase: CreatePromotionUseCase,
     private val updatePromotionUseCase: UpdatePromotionUseCase,
     private val setPromotionActiveUseCase: SetPromotionActiveUseCase,
+    private val promotionsRepository: PromotionsRepository,
     private val networkMonitor: NetworkMonitor,
 ) : ViewModel() {
 
@@ -37,9 +40,19 @@ class PromotionsViewModel @Inject constructor(
         val isOnline = networkMonitor.isOnline()
         _uiState.update { it.copy(isLoading = true, errorMessage = null, isOnline = isOnline, todayDate = LocalDate.now().toString()) }
         viewModelScope.launch {
-            val result = getPromotionsUseCase(includeInactive = true)
-            result.onSuccess { list ->
-                _uiState.update { it.copy(isLoading = false, promotions = list, isOnline = networkMonitor.isOnline()) }
+            val request = PageRequest(offset = 0, limit = 50)
+            val result = promotionsRepository.getPromotionPage(includeInactive = true, page = request)
+            result.onSuccess { dataPage ->
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        promotions = dataPage.items,
+                        hasMore = dataPage.hasMore,
+                        nextOffset = dataPage.nextOffset,
+                        pageFetchedAt = dataPage.fetchedAt,
+                        isOnline = networkMonitor.isOnline(),
+                    )
+                }
             }.onFailure { err ->
                 _uiState.update {
                     it.copy(
@@ -52,13 +65,55 @@ class PromotionsViewModel @Inject constructor(
         }
     }
 
+    fun loadNextPage() {
+        val state = _uiState.value
+        val offset = state.nextOffset ?: return
+        if (!state.hasMore || state.isLoadingPage || state.isLoading) return
+
+        _uiState.update { it.copy(isLoadingPage = true) }
+        viewModelScope.launch {
+            val request = PageRequest(offset = offset, limit = 50)
+            val result = promotionsRepository.getPromotionPage(includeInactive = true, page = request)
+            result.onSuccess { dataPage ->
+                _uiState.update { current ->
+                    val existingIds = current.promotions.map { it.id }.toSet()
+                    val newItems = dataPage.items.filterNot { existingIds.contains(it.id) }
+                    current.copy(
+                        isLoadingPage = false,
+                        promotions = current.promotions + newItems,
+                        hasMore = dataPage.hasMore,
+                        nextOffset = dataPage.nextOffset,
+                        pageFetchedAt = dataPage.fetchedAt ?: current.pageFetchedAt,
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isLoadingPage = false,
+                        errorMessage = err.message ?: "Error al cargar más promociones.",
+                    )
+                }
+            }
+        }
+    }
+
     fun refreshPromotions() {
         val isOnline = networkMonitor.isOnline()
         _uiState.update { it.copy(isRefreshing = true, errorMessage = null, isOnline = isOnline, todayDate = LocalDate.now().toString()) }
         viewModelScope.launch {
-            val result = getPromotionsUseCase(includeInactive = true)
-            result.onSuccess { list ->
-                _uiState.update { it.copy(isRefreshing = false, promotions = list, isOnline = networkMonitor.isOnline()) }
+            val request = PageRequest(offset = 0, limit = 50)
+            val result = promotionsRepository.getPromotionPage(includeInactive = true, page = request)
+            result.onSuccess { dataPage ->
+                _uiState.update {
+                    it.copy(
+                        isRefreshing = false,
+                        promotions = dataPage.items,
+                        hasMore = dataPage.hasMore,
+                        nextOffset = dataPage.nextOffset,
+                        pageFetchedAt = dataPage.fetchedAt,
+                        isOnline = networkMonitor.isOnline(),
+                    )
+                }
             }.onFailure { err ->
                 _uiState.update {
                     it.copy(

@@ -228,6 +228,11 @@ class TablesViewModelTest {
         override fun observeOrder(orderId: String): Flow<Order?> = flowOf(null)
         override fun observeOrderDetails(orderId: String) = flowOf(emptyList<com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderDetail>())
         override suspend fun refreshOrders(): Result<Unit> = Result.success(Unit)
+        override suspend fun getOrderPage(
+            filter: com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderPageFilter,
+            page: com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest,
+        ): Result<com.mirandadevsource.exquisssitaappmanager.domain.entity.DataPage<com.mirandadevsource.exquisssitaappmanager.domain.entity.Order>> =
+            Result.success(com.mirandadevsource.exquisssitaappmanager.domain.entity.pageFromCompleteList(ordersByTable.values.flatten(), page, filter.scope()))
         override suspend fun openOrder(request: com.mirandadevsource.exquisssitaappmanager.domain.entity.OpenOrderRequest): Result<String> = Result.success("ord-new")
         override suspend fun addItem(request: com.mirandadevsource.exquisssitaappmanager.domain.entity.AddOrderItemRequest): Result<String> = Result.success("item-new")
         override suspend fun updateItemQuantity(detailId: String, quantity: Int): Result<String> = Result.success(detailId)

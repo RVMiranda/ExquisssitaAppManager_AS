@@ -28,6 +28,10 @@ data class InventoryUiState(
     val statusFilter: ProductStatusFilter = ProductStatusFilter.ACTIVOS,
     val stockFilter: StockFilter = StockFilter.TODOS,
     val isAdmin: Boolean = false,
+    val isLoadingPage: Boolean = false,
+    val hasMore: Boolean = false,
+    val nextOffset: Int? = null,
+    val pageFetchedAt: java.time.Instant? = null,
 
     // Product Create / Edit Form State
     val isFormDialogOpen: Boolean = false,

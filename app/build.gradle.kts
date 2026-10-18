@@ -1,3 +1,4 @@
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -36,6 +37,18 @@ android {
             .replace("\"", "\\\"")
         val supabaseKey = buildConfigValue("supabase.publishable.key")
             .ifBlank { buildConfigValue("supabase.anon.key") }
+        require(!supabaseKey.startsWith("sb_secret_", ignoreCase = true)) {
+            "La clave de Supabase configurada es secreta. Usa únicamente una clave publishable/anon en el APK."
+        }
+        if (supabaseKey.count { it == '.' } == 2) {
+            val payload = runCatching {
+                val encodedPayload = supabaseKey.split('.')[1]
+                String(Base64.getUrlDecoder().decode(encodedPayload), Charsets.UTF_8)
+            }.getOrNull()
+            require(payload?.contains(Regex("\\\"role\\\"\\s*:\\s*\\\"anon\\\"")) == true) {
+                "El JWT de Supabase configurado no declara role=anon; no se permiten service_role ni JWT desconocidos en el APK."
+            }
+        }
         buildConfigField("String", "SUPABASE_URL", "\"${buildConfigValue("supabase.url")}\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$supabaseKey\"")
     }

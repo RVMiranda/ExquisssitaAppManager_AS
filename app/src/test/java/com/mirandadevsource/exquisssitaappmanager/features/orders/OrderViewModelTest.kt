@@ -4,6 +4,9 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.AddOrderItemRequ
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.InventoryCommand
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OpenOrderRequest
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderPageFilter
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.DataPage
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderDetail
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentLineStatus
@@ -306,6 +309,9 @@ class OrderViewModelTest {
             flowOf(detailsFlow.value[orderId] ?: emptyList())
 
         override suspend fun refreshOrders(): Result<Unit> = Result.success(Unit)
+
+        override suspend fun getOrderPage(filter: OrderPageFilter, page: PageRequest): Result<DataPage<Order>> =
+            Result.success(com.mirandadevsource.exquisssitaappmanager.domain.entity.pageFromCompleteList(ordersFlow.value, page, filter.scope()))
 
         override suspend fun openOrder(request: OpenOrderRequest): Result<String> {
             val id = "ord-${System.currentTimeMillis()}"

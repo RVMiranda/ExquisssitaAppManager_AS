@@ -10,6 +10,7 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.TableStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.CashRegisterRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.InventoryRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.OrderRepository
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.PaymentRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.TableRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.payroll.GetWeeklyPayrollStatusUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -27,6 +28,7 @@ import javax.inject.Inject
 class DashboardViewModel @Inject constructor(
     private val tableRepository: TableRepository,
     private val orderRepository: OrderRepository,
+    private val paymentRepository: PaymentRepository,
     private val inventoryRepository: InventoryRepository,
     private val getWeeklyPayrollStatusUseCase: GetWeeklyPayrollStatusUseCase,
     private val cashRegisterRepository: CashRegisterRepository,
@@ -162,9 +164,11 @@ class DashboardViewModel @Inject constructor(
             _uiState.update { it.copy(isSyncing = true, errorMessage = null, userMessage = null) }
             val tResult = tableRepository.syncPendingCommands()
             val oResult = orderRepository.syncPendingCommands()
+            val pResult = paymentRepository.syncPendingPayments()
             val iResult = inventoryRepository.syncPendingCommands()
+            val payrollResult = getWeeklyPayrollStatusUseCase(LocalDate.now(MEXICO_ZONE))
 
-            if (tResult.isFailure || oResult.isFailure || iResult.isFailure) {
+            if (tResult.isFailure || oResult.isFailure || pResult.isFailure || iResult.isFailure || payrollResult.isFailure) {
                 _uiState.update {
                     it.copy(
                         isSyncing = false,

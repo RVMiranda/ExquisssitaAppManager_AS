@@ -21,13 +21,13 @@ import javax.inject.Singleton
 object OrdersModule {
     @Provides @Singleton
     fun provideTableRepository(supabase: SupabaseClient, network: NetworkMonitor, database: AppDatabase, auth: AuthRepository): TableRepository =
-        TableRepositoryImpl(supabase, network, database.orderCommandDao(), auth, database, database.tableDao(), database.orderDao())
+        TableRepositoryImpl(supabase, network, database.orderCommandDao(), database.syncExecutionLeaseDao(), auth, database, database.tableDao(), database.orderDao())
 
     @Provides @Singleton
     fun provideOrderRepository(supabase: SupabaseClient, network: NetworkMonitor, database: AppDatabase, auth: AuthRepository): OrderRepository =
-        OrderRepositoryImpl(supabase, network, database.orderCommandDao(), auth, database, database.orderDao(), database.orderDetailDao(), database.tableDao(), database.transactionDao(), database.productDao())
+        OrderRepositoryImpl(supabase, network, database.orderCommandDao(), database.syncExecutionLeaseDao(), auth, database, database.orderDao(), database.orderDetailDao(), database.tableDao(), database.transactionDao(), database.productDao())
 
     @Provides @Singleton
     fun providePaymentRepository(supabase: SupabaseClient, network: NetworkMonitor, database: AppDatabase, auth: AuthRepository): PaymentRepository =
-        PaymentRepositoryImpl(supabase, network, database.orderCommandDao(), auth, database, database.transactionDao(), database.orderDetailDao(), database.orderDao(), database.productDao())
+        PaymentRepositoryImpl(supabase, network, database.orderCommandDao(), database.syncExecutionLeaseDao(), auth, database, database.transactionDao(), database.orderDetailDao(), database.orderDao(), database.productDao())
 }

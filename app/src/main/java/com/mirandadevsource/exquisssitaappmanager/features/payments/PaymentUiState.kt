@@ -1,5 +1,6 @@
 package com.mirandadevsource.exquisssitaappmanager.features.payments
 
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PesoAmountParser
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderDetail
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Payment
@@ -154,11 +155,10 @@ data class PaymentUiState(
 
     /** Efectivo recibido en centavos parseado desde el input */
     val cashReceivedCents: Long
-        get() {
-            val clean = cashReceivedInput.trim().replace("$", "").replace(",", "")
-            val doubleVal = clean.toDoubleOrNull() ?: return 0L
-            return (doubleVal * 100).toLong().coerceAtLeast(0L)
-        }
+        get() = PesoAmountParser.toCents(cashReceivedInput) ?: 0L
+
+    val isCashReceivedInputValid: Boolean
+        get() = cashReceivedInput.isBlank() || PesoAmountParser.toCents(cashReceivedInput) != null
 
     /** Cambio en centavos si se paga en efectivo y el monto entregado es mayor o igual */
     val cashChangeCents: Long
@@ -176,8 +176,8 @@ data class PaymentUiState(
             if (order == null) return false
             val amount = calculatedPaymentAmountCents
             if (amount <= 0L || amount > pendingBalanceCents) return false
-            if (selectedMethod == PaymentMethod.CASH && cashReceivedInput.isNotBlank()) {
-                if (cashReceivedCents < amount) return false
+            if (selectedMethod == PaymentMethod.CASH) {
+                if (cashReceivedInput.isBlank() || !isCashReceivedInputValid || cashReceivedCents < amount) return false
             }
             return true
         }

@@ -9,6 +9,9 @@ import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.data.mappers.toDomain
 import com.mirandadevsource.exquisssitaappmanager.data.mappers.toEntity
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Promotion
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.DataPage
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.pageFromFetchedWindow
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.PromotionsRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.from
@@ -28,18 +31,34 @@ class PromotionsRepositoryImpl @Inject constructor(
     override suspend fun getPromotions(includeInactive: Boolean): Result<List<Promotion>> {
         if (!networkMonitor.isOnline()) return readCache(includeInactive)
         return try {
-            val remote = supabase.from(PROMOTIONS_TABLE)
-                .select(columns = PROMOTION_COLUMNS) {
-                    order("fecha_publicacion", Order.DESCENDING)
-                    order("id", Order.DESCENDING)
-                }
-                .decodeList<PromotionDto>()
-            promotionDao.replaceAll(remote.map { it.toEntity() })
+            // Upsert complete pages; offset pagination is not a database snapshot when rows
+            // change concurrently, so absence from a page must never imply a remote delete.
+            val remote = fetchAllPromotions()
+            promotionDao.upsertAll(remote.map { it.toEntity() })
             readCache(includeInactive)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
             if (failure.isNetworkFailure()) readCache(includeInactive) else Result.failure(failure)
+        }
+    }
+
+    override suspend fun getPromotionPage(includeInactive: Boolean, page: PageRequest): Result<DataPage<Promotion>> {
+        val scope = "promotions:${if (includeInactive) "all" else "active"}"
+        if (!networkMonitor.isOnline()) return readPromotionPage(includeInactive, page, scope)
+        return try {
+            val rows = supabase.from(PROMOTIONS_TABLE).select(columns = PROMOTION_COLUMNS) {
+                if (!includeInactive) filter { eq("activo", true) }
+                order("fecha_publicacion", Order.DESCENDING)
+                order("id", Order.DESCENDING)
+                range(page.offset.toLong()..(page.offset + page.limit).toLong())
+            }.decodeList<PromotionDto>()
+            promotionDao.upsertAll(rows.map { it.toEntity() })
+            Result.success(pageFromFetchedWindow(rows.map { it.toEntity().toDomain() }, page, scope))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            if (failure.isNetworkFailure()) readPromotionPage(includeInactive, page, scope) else Result.failure(failure)
         }
     }
 
@@ -134,6 +153,30 @@ class PromotionsRepositoryImpl @Inject constructor(
         Result.failure(failure)
     }
 
+    private suspend fun readPromotionPage(includeInactive: Boolean, page: PageRequest, scope: String): Result<DataPage<Promotion>> = try {
+        val rows = promotionDao.getPromotionPage(includeInactive, page.limit + 1, page.offset).map { it.toDomain() }
+        Result.success(pageFromFetchedWindow(rows, page, scope, fetchedAt = null))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        Result.failure(failure)
+    }
+
+    private suspend fun fetchAllPromotions(): List<PromotionDto> {
+        val rows = mutableListOf<PromotionDto>()
+        var offset = 0L
+        while (true) {
+            val page = supabase.from(PROMOTIONS_TABLE).select(columns = PROMOTION_COLUMNS) {
+                order("fecha_publicacion", Order.DESCENDING)
+                order("id", Order.DESCENDING)
+                range(offset..(offset + SNAPSHOT_PAGE_SIZE - 1))
+            }.decodeList<PromotionDto>()
+            rows += page
+            if (page.size.toLong() < SNAPSHOT_PAGE_SIZE) return rows
+            offset += SNAPSHOT_PAGE_SIZE
+        }
+    }
+
     private fun validate(titulo: String, descripcion: String, id: String?, fecha: String?): IllegalArgumentException? {
         if (titulo.isBlank()) return IllegalArgumentException("El título de la promoción es obligatorio.")
         if (descripcion.isBlank()) return IllegalArgumentException("La descripción de la promoción es obligatoria.")
@@ -164,6 +207,7 @@ class PromotionsRepositoryImpl @Inject constructor(
     }
 
     private companion object {
+        const val SNAPSHOT_PAGE_SIZE = 500L
         const val PROMOTIONS_TABLE = "promociones"
         val DATE_PATTERN = Regex("\\d{4}-\\d{2}-\\d{2}")
         val PROMOTION_COLUMNS = Columns.list(

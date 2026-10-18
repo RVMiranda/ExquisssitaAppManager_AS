@@ -131,6 +131,7 @@ fun CheckoutScreen(
                         message = bannerMsg,
                         isError = uiState.errorMessage != null,
                         onDismiss = onDismissMessage,
+                        isWarning = uiState.lastPaymentCommand?.status == PaymentStatus.PENDING_SYNC && uiState.errorMessage == null,
                     )
                 }
             }

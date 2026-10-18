@@ -26,6 +26,7 @@ object CashRegisterModule {
         supabase = supabase,
         networkMonitor = network,
         commandDao = database.orderCommandDao(),
+        leaseDao = database.syncExecutionLeaseDao(),
         authRepository = auth,
         closureDao = database.dailyClosureDao(),
     )

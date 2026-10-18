@@ -182,6 +182,41 @@ fun EmployeesScreen(
                                 onToggleActive = { viewModel.toggleActive(employee) },
                             )
                         }
+
+                        if (state.isLoadingPage) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = BrandyBrown,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                }
+                            }
+                        } else if (state.hasMore) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { viewModel.loadNextPage() },
+                                        border = BorderStroke(1.dp, BrandyBrown),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandyBrown),
+                                    ) {
+                                        Text("Cargar más empleados")
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -547,10 +582,17 @@ private fun EmployeeFormDialog(
                     placeholder = { Text("1200.00") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
-                    enabled = !isSaving,
+                    enabled = !isSaving && formData.canEditSalary,
                     modifier = Modifier.fillMaxWidth(),
                     colors = outlinedTextFieldColors(),
                 )
+                if (!formData.canEditSalary) {
+                    Text(
+                        text = "Solo un Administrador puede modificar esta cuota (un Gerente no puede auto-editar su salario).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ChocolateFondant.copy(alpha = 0.7f),
+                    )
+                }
 
                 // Selector de Día de Pago (1=Lunes..7=Domingo)
                 ExposedDropdownMenuBox(

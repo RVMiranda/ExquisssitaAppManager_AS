@@ -170,6 +170,7 @@ class PaymentViewModelTest {
             table = sampleTable,
             details = sampleDetails,
             splitMode = SplitMode.FULL,
+            cashReceivedInput = "150.00",
         )
 
         assertEquals(15000L, state.calculatedPaymentAmountCents)
@@ -187,6 +188,7 @@ class PaymentViewModelTest {
                 "det-1" to 2, // 2 * 3000 = 6000
                 "det-2" to 1, // 1 * 3000 = 3000
             ),
+            cashReceivedInput = "100.00",
         )
 
         assertEquals(9000L, state.calculatedPaymentAmountCents)

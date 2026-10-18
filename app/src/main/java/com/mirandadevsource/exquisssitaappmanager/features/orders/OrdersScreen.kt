@@ -1407,11 +1407,12 @@ internal fun UserMessageBanner(
     isError: Boolean,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    isWarning: Boolean = false,
 ) {
-    val bgColor = if (isError) Color(0xFFFFEBEE) else Color(0xFFE8F5E9)
-    val borderColor = if (isError) Color(0xFFE57373) else Color(0xFF81C784)
-    val textColor = if (isError) Color(0xFFC62828) else Color(0xFF2E7D32)
-    val icon = if (isError) Icons.Outlined.Info else Icons.Outlined.CheckCircleOutline
+    val bgColor = when { isError -> Color(0xFFFFEBEE); isWarning -> Color(0xFFFFF3E0); else -> Color(0xFFE8F5E9) }
+    val borderColor = when { isError -> Color(0xFFE57373); isWarning -> Color(0xFFFFB74D); else -> Color(0xFF81C784) }
+    val textColor = when { isError -> Color(0xFFC62828); isWarning -> Color(0xFF8A4B08); else -> Color(0xFF2E7D32) }
+    val icon = if (isError || isWarning) Icons.Outlined.Info else Icons.Outlined.CheckCircleOutline
 
     Surface(
         shape = RoundedCornerShape(8.dp),

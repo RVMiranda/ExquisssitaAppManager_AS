@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.AuthState
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.InventoryMovementType
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.RegisterInventoryMovement
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.UserRole
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.InventoryRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.inventory.CreateProductUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.inventory.GetInventoryMovementsUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.inventory.GetProductsUseCase
@@ -30,6 +32,7 @@ class InventoryViewModel @Inject constructor(
     private val registerInventoryMovementUseCase: RegisterInventoryMovementUseCase,
     private val getInventoryMovementsUseCase: GetInventoryMovementsUseCase,
     private val authRepository: AuthRepository,
+    private val inventoryRepository: InventoryRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InventoryUiState())
@@ -56,13 +59,18 @@ class InventoryViewModel @Inject constructor(
                 else current.copy(isLoading = true, errorMessage = null)
             }
 
-            getProductsUseCase(includeInactive = true)
-                .onSuccess { products ->
+            val includeInactive = _uiState.value.statusFilter != ProductStatusFilter.ACTIVOS
+            val request = PageRequest(offset = 0, limit = 50)
+            inventoryRepository.getProductPage(includeInactive = includeInactive, page = request)
+                .onSuccess { dataPage ->
                     _uiState.update { current ->
                         current.copy(
                             isLoading = false,
                             isRefreshing = false,
-                            rawProducts = products,
+                            rawProducts = dataPage.items,
+                            hasMore = dataPage.hasMore,
+                            nextOffset = dataPage.nextOffset,
+                            pageFetchedAt = dataPage.fetchedAt,
                             errorMessage = null,
                         )
                     }
@@ -73,6 +81,40 @@ class InventoryViewModel @Inject constructor(
                             isLoading = false,
                             isRefreshing = false,
                             errorMessage = error.localizedMessage ?: "Error al cargar el catálogo de productos.",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun loadNextPage() {
+        val state = _uiState.value
+        val offset = state.nextOffset ?: return
+        if (!state.hasMore || state.isLoadingPage || state.isLoading) return
+
+        _uiState.update { it.copy(isLoadingPage = true) }
+        viewModelScope.launch {
+            val includeInactive = _uiState.value.statusFilter != ProductStatusFilter.ACTIVOS
+            val request = PageRequest(offset = offset, limit = 50)
+            inventoryRepository.getProductPage(includeInactive = includeInactive, page = request)
+                .onSuccess { dataPage ->
+                    _uiState.update { current ->
+                        val existingIds = current.rawProducts.map { p -> p.id }.toSet()
+                        val newItems = dataPage.items.filterNot { p -> existingIds.contains(p.id) }
+                        current.copy(
+                            isLoadingPage = false,
+                            rawProducts = current.rawProducts + newItems,
+                            hasMore = dataPage.hasMore,
+                            nextOffset = dataPage.nextOffset,
+                            pageFetchedAt = dataPage.fetchedAt ?: current.pageFetchedAt,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { current ->
+                        current.copy(
+                            isLoadingPage = false,
+                            errorMessage = error.localizedMessage ?: "Error al cargar más productos.",
                         )
                     }
                 }
@@ -91,7 +133,8 @@ class InventoryViewModel @Inject constructor(
     }
 
     fun onStatusFilterSelect(filter: ProductStatusFilter) {
-        _uiState.update { it.copy(statusFilter = filter) }
+        _uiState.update { it.copy(statusFilter = filter, nextOffset = null, hasMore = false) }
+        loadProducts()
     }
 
     fun onStockFilterSelect(filter: StockFilter) {

@@ -78,6 +78,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Promotion
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ApricotIllusion
@@ -300,6 +301,41 @@ fun PromotionsScreen(
                                 onToggleActive = { viewModel.requestToggleActive(promo) },
                                 onViewDetails = { viewModel.openDetailDialog(promo) },
                             )
+                        }
+
+                        if (uiState.isLoadingPage) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = BrandyBrown,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                }
+                            }
+                        } else if (uiState.hasMore) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { viewModel.loadNextPage() },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandyBrown),
+                                        border = BorderStroke(1.dp, ApricotIllusion),
+                                        shape = RoundedCornerShape(8.dp),
+                                    ) {
+                                        Text("Cargar más promociones", fontSize = 12.sp)
+                                    }
+                                }
+                            }
                         }
                     }
                 }

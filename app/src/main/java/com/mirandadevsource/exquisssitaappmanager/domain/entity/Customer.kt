@@ -1,5 +1,7 @@
 package com.mirandadevsource.exquisssitaappmanager.domain.entity
 
+import java.time.Instant
+
 data class Customer(
     val id: String,
     val name: String,
@@ -7,10 +9,6 @@ data class Customer(
     val totalVisits: Int,
     val loyaltyPoints: Int,
     val registeredAt: String?,
-)
-
-/** Carries the QR payload only in the response to customer creation. */
-data class CreatedCustomer(
-    val customer: Customer,
-    val qrPayload: String,
+    val fetchedAt: Instant? = null,
+    val isCached: Boolean = false,
 )

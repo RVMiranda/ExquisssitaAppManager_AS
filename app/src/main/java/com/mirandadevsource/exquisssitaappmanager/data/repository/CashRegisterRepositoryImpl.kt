@@ -2,6 +2,7 @@ package com.mirandadevsource.exquisssitaappmanager.data.repository
 
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.DailyClosureDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderCommandDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.SyncExecutionLeaseDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.OrderCommandEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.DailyClosureDto
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
@@ -32,9 +33,10 @@ class CashRegisterRepositoryImpl @Inject constructor(
     supabase: SupabaseClient,
     networkMonitor: NetworkMonitor,
     commandDao: OrderCommandDao,
+    leaseDao: SyncExecutionLeaseDao,
     authRepository: AuthRepository,
     private val closureDao: DailyClosureDao,
-) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository), CashRegisterRepository {
+) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository, leaseDao), CashRegisterRepository {
 
     override suspend fun closeCurrentPeriod(): Result<DailyClosure> {
         val session = (authRepository.state.value as? AuthState.SignedIn)?.session

@@ -1,11 +1,13 @@
 package com.mirandadevsource.exquisssitaappmanager.data.repository
 
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderCommandDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.SyncExecutionLeaseDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.OrderCommandEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.SyncCommandResponse
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.SyncExecutePayload
 import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.CancelDetailPayload
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
+import com.mirandadevsource.exquisssitaappmanager.data.sync.SyncExecutionMutex
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.AuthState
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
 import io.github.jan.supabase.SupabaseClient
@@ -14,8 +16,6 @@ import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.encodeToString
@@ -26,8 +26,8 @@ abstract class OrderSyncSupport(
     protected val networkMonitor: NetworkMonitor,
     protected val commandDao: OrderCommandDao,
     protected val authRepository: AuthRepository,
+    protected val leaseDao: SyncExecutionLeaseDao,
 ) {
-    private val syncMutex = Mutex()
 
     protected fun actorId(): String? = (authRepository.state.value as? AuthState.SignedIn)?.session?.userId
 
@@ -41,6 +41,23 @@ abstract class OrderSyncSupport(
         if (actor != command.actorUserId || !networkMonitor.isOnline() || !hasRemoteSession()) return command
         val remoteActor = supabase.auth.currentUserOrNull()?.id
         if (remoteActor != actor) return command
+        var outcome = command
+        val acquired = SyncExecutionMutex.withActorLease(actor, leaseDao) {
+            val latest = commandDao.getByKey(command.idempotencyKey) ?: return@withActorLease
+            if (latest.status == OrderCommandEntity.SYNCED || latest.status == OrderCommandEntity.REJECTED) {
+                outcome = latest
+            } else if (latest.nextAttemptAtMillis == null || latest.nextAttemptAtMillis <= System.currentTimeMillis()) {
+                outcome = submitClaimed(latest)
+            } else {
+                outcome = latest
+            }
+        }
+        return if (acquired) outcome else commandDao.getByKey(command.idempotencyKey) ?: command
+    }
+
+    private suspend fun submitClaimed(command: OrderCommandEntity): OrderCommandEntity {
+        val actor = actorId()
+        if (actor != command.actorUserId || !networkMonitor.isOnline() || !hasRemoteSession()) return command
         val inProgress = command.copy(status = OrderCommandEntity.PROCESSING, attemptCount = command.attemptCount + 1, updatedAtMillis = System.currentTimeMillis())
         commandDao.update(inProgress)
         return try {
@@ -89,12 +106,20 @@ abstract class OrderSyncSupport(
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa para sincronizar."))
         if (!networkMonitor.isOnline() || !hasRemoteSession()) return Result.success(Unit)
         return try {
-            syncMutex.withLock {
+            val acquired = SyncExecutionMutex.withActorLease(actor, leaseDao) {
                 commandDao.getRecoverableForActor(actor, System.currentTimeMillis())
                     .filter { includePayments || it.entity != "registrar_pago" }
-                    .forEach { submit(it) }
+                    .forEach { pending ->
+                        val latest = commandDao.getByKey(pending.idempotencyKey) ?: return@forEach
+                        if (latest.status != OrderCommandEntity.SYNCED && latest.status != OrderCommandEntity.REJECTED &&
+                            (latest.nextAttemptAtMillis == null || latest.nextAttemptAtMillis <= System.currentTimeMillis())
+                        ) {
+                            submitClaimed(latest)
+                        }
+                    }
             }
-            Result.success(Unit)
+            if (acquired) Result.success(Unit)
+            else Result.failure(IllegalStateException("La sincronización de esta cuenta ya está activa en otra ejecución."))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {

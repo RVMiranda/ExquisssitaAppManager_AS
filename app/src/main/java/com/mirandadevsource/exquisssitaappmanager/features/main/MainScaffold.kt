@@ -33,6 +33,9 @@ import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PointOfSale
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.TableRestaurant
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,16 +51,18 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -77,6 +82,7 @@ import com.mirandadevsource.exquisssitaappmanager.features.cash_register.CashReg
 import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryScreen
 import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.loyalty.LoyaltyScanScreen
+import com.mirandadevsource.exquisssitaappmanager.features.loyalty.LoyaltyViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.promotions.PromotionsScreen
@@ -151,7 +157,7 @@ private val DrawerNavGroups = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScaffold(
-    session: AppUserSession?,
+    session: AppUserSession,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -159,14 +165,33 @@ fun MainScaffold(
     val scope = rememberCoroutineScope()
     var currentDestination by rememberSaveable { mutableStateOf(MainNavDestination.DASHBOARD) }
     var loyaltyInitialPhone by rememberSaveable { mutableStateOf<String?>(null) }
-    val employeesViewModel: EmployeesViewModel = hiltViewModel()
-    val payrollViewModel: PayrollViewModel = hiltViewModel()
-    val inventoryViewModel: InventoryViewModel = hiltViewModel()
-    val promotionsViewModel: PromotionsViewModel = hiltViewModel()
-    val tablesViewModel: TablesViewModel = hiltViewModel()
+    var showSignOutConfirmation by remember { mutableStateOf(false) }
+
+    // ordersViewModel se comparte a nivel de scaffold para sincronizar la topbar contextual, back navigation y mesas
     val ordersViewModel: OrderViewModel = hiltViewModel()
-    val cashRegisterViewModel: CashRegisterViewModel = hiltViewModel()
-    val dashboardViewModel: DashboardViewModel = hiltViewModel()
+    val ordersUiState by ordersViewModel.uiState.collectAsStateWithLifecycle()
+
+    // Jerarquía de BackHandler: cerrar drawer -> salir de checkout -> salir de detalle -> volver a Dashboard
+    val isOrdersInDetail = currentDestination == MainNavDestination.ORDERS && ordersUiState.selectedOrder != null
+    val isOrdersInCheckout = currentDestination == MainNavDestination.ORDERS && ordersUiState.activeCheckoutOrder != null
+    val canGoBack = drawerState.isOpen || isOrdersInCheckout || isOrdersInDetail || currentDestination != MainNavDestination.DASHBOARD
+
+    BackHandler(enabled = canGoBack) {
+        when {
+            drawerState.isOpen -> {
+                scope.launch { drawerState.close() }
+            }
+            isOrdersInCheckout -> {
+                ordersViewModel.dismissCheckout()
+            }
+            isOrdersInDetail -> {
+                ordersViewModel.dismissOrderDetail()
+            }
+            currentDestination != MainNavDestination.DASHBOARD -> {
+                currentDestination = MainNavDestination.DASHBOARD
+            }
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -224,21 +249,21 @@ fun MainScaffold(
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = session?.employeeName?.ifBlank { "Personal" } ?: "Personal",
+                                    text = session.employeeName.ifBlank { "Personal" },
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = ChocolateFondant,
                                     maxLines = 1,
                                 )
                                 Text(
-                                    text = session?.email.orEmpty(),
+                                    text = session.email,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = ChocolateFondant.copy(alpha = 0.7f),
                                     maxLines = 1,
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    text = session?.role?.displayName.orEmpty().uppercase(),
+                                    text = session.role.displayName.uppercase(),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = BrandyBrown,
                                     fontWeight = FontWeight.SemiBold,
@@ -258,7 +283,7 @@ fun MainScaffold(
                             .verticalScroll(drawerScrollState),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        val isManagerOrAdmin = session?.role == UserRole.ADMIN || session?.role == UserRole.GERENTE
+                        val isManagerOrAdmin = session.role == UserRole.ADMIN || session.role == UserRole.GERENTE
 
                         DrawerNavGroups.forEachIndexed { index, group ->
                             val visibleItems = group.destinations.filter { !it.requiresManagerAccess || isManagerOrAdmin }
@@ -322,7 +347,7 @@ fun MainScaffold(
                     OutlinedButton(
                         onClick = {
                             scope.launch { drawerState.close() }
-                            onSignOut()
+                            showSignOutConfirmation = true
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -351,7 +376,6 @@ fun MainScaffold(
     ) {
         Scaffold(
             topBar = {
-                val ordersUiState by ordersViewModel.uiState.collectAsState()
                 val isOrders = currentDestination == MainNavDestination.ORDERS
                 val activeCheckout = if (isOrders) ordersUiState.activeCheckoutOrder else null
                 val selectedOrder = if (isOrders) ordersUiState.selectedOrder else null
@@ -440,7 +464,7 @@ fun MainScaffold(
                         }
                     },
                     actions = {
-                        if (session?.isOffline == true) {
+                        if (session.isOffline) {
                             Surface(
                                 shape = RoundedCornerShape(4.dp),
                                 border = BorderStroke(1.dp, OfflineAmber),
@@ -482,6 +506,7 @@ fun MainScaffold(
             ) {
                 when (currentDestination) {
                     MainNavDestination.DASHBOARD -> {
+                        val dashboardViewModel: DashboardViewModel = hiltViewModel()
                         DashboardScreen(
                             session = session,
                             viewModel = dashboardViewModel,
@@ -506,7 +531,9 @@ fun MainScaffold(
                         )
                     }
                     MainNavDestination.LOYALTY -> {
+                        val loyaltyViewModel: LoyaltyViewModel = hiltViewModel()
                         LoyaltyScanScreen(
+                            viewModel = loyaltyViewModel,
                             initialPhoneQuery = loyaltyInitialPhone,
                             onBackToDashboard = {
                                 currentDestination = MainNavDestination.DASHBOARD
@@ -514,18 +541,23 @@ fun MainScaffold(
                         )
                     }
                     MainNavDestination.INVENTORY -> {
+                        val inventoryViewModel: InventoryViewModel = hiltViewModel()
                         InventoryScreen(viewModel = inventoryViewModel)
                     }
                     MainNavDestination.PROMOTIONS -> {
+                        val promotionsViewModel: PromotionsViewModel = hiltViewModel()
                         PromotionsScreen(viewModel = promotionsViewModel)
                     }
                     MainNavDestination.EMPLOYEES -> {
+                        val employeesViewModel: EmployeesViewModel = hiltViewModel()
                         EmployeesScreen(viewModel = employeesViewModel)
                     }
                     MainNavDestination.PAYROLL -> {
+                        val payrollViewModel: PayrollViewModel = hiltViewModel()
                         PayrollScreen(viewModel = payrollViewModel)
                     }
                     MainNavDestination.TABLES -> {
+                        val tablesViewModel: TablesViewModel = hiltViewModel()
                         TablesScreen(
                             viewModel = tablesViewModel,
                             onOpenOrderForTable = { tableId ->
@@ -547,6 +579,7 @@ fun MainScaffold(
                         )
                     }
                     MainNavDestination.CASH_REGISTER -> {
+                        val cashRegisterViewModel: CashRegisterViewModel = hiltViewModel()
                         CashRegisterScreen(
                             viewModel = cashRegisterViewModel,
                             onNavigateToOrders = {
@@ -557,6 +590,46 @@ fun MainScaffold(
                 }
             }
         }
+    }
+
+    if (showSignOutConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showSignOutConfirmation = false },
+            title = {
+                Text(
+                    text = "¿Cerrar sesión?",
+                    color = BrandyBrown,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            },
+            text = {
+                Text(
+                    text = "Se cerrará el panel operativo en este dispositivo. Las operaciones pendientes de sincronización quedarán protegidas para este usuario y se reanudarán al volver a iniciar sesión.",
+                    color = ChocolateFondant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSignOutConfirmation = false
+                        onSignOut()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandyBrown),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text("Cerrar sesión", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSignOutConfirmation = false }) {
+                    Text("Cancelar", color = ChocolateFondant)
+                }
+            },
+            containerColor = VanillaCustard,
+            shape = RoundedCornerShape(12.dp),
+        )
     }
 }
 

@@ -12,6 +12,9 @@ interface PromotionDao {
     @Query("SELECT * FROM promotion_cache WHERE (:includeInactive = 1 OR activo = 1) ORDER BY fechaPublicacion DESC, id DESC")
     suspend fun getPromotions(includeInactive: Boolean): List<PromotionEntity>
 
+    @Query("SELECT * FROM promotion_cache WHERE (:includeInactive = 1 OR activo = 1) ORDER BY fechaPublicacion DESC, id DESC LIMIT :limit OFFSET :offset")
+    suspend fun getPromotionPage(includeInactive: Boolean, limit: Int, offset: Int): List<PromotionEntity>
+
     @Query("SELECT * FROM promotion_cache WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): PromotionEntity?
 

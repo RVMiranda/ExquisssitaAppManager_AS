@@ -14,6 +14,8 @@ data class PayrollPaymentIntentEntity(
     val periodoInicio: String,
     val requestedFechaPago: String?,
     val notas: String?,
+    /** Auth user that requested this payment. Null denotes an unverifiable legacy intent. */
+    val actorUserId: String? = null,
     val createdAtMillis: Long = System.currentTimeMillis(),
     val lastSyncError: String? = null,
 )

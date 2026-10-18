@@ -8,6 +8,7 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentAllocatio
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentLineStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentMethod
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentRequest
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Table
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.InventoryRepository
@@ -221,7 +222,18 @@ class PaymentViewModel @Inject constructor(
 
         if (!state.canSubmitPayment) {
             _uiState.update {
-                it.copy(errorMessage = "El monto a cobrar debe ser mayor a \$0.00 y no exceder el saldo pendiente.")
+                it.copy(
+                    errorMessage = when {
+                        state.selectedMethod == PaymentMethod.CASH && state.cashReceivedInput.isBlank() ->
+                            "Ingresa el efectivo recibido para calcular el cambio."
+                        state.selectedMethod == PaymentMethod.CASH && !state.isCashReceivedInputValid ->
+                            "El efectivo debe tener un formato válido, por ejemplo 1200 o 1,200.00."
+                        state.selectedMethod == PaymentMethod.CASH && state.cashReceivedInput.isNotBlank() &&
+                            state.cashReceivedCents < state.calculatedPaymentAmountCents ->
+                            "El efectivo recibido no cubre el monto del pago."
+                        else -> "El monto a cobrar debe ser mayor a \$0.00 y no exceder el saldo pendiente."
+                    },
+                )
             }
             return
         }
@@ -247,17 +259,39 @@ class PaymentViewModel @Inject constructor(
         viewModelScope.launch {
             val result = paymentRepository.processPayment(request)
             result.onSuccess { command ->
-                _uiState.update {
-                    it.copy(
-                        isSubmitting = false,
-                        lastPaymentCommand = command,
-                        successMessage = "Pago de ${formatPesos(totalPaymentCents)} registrado correctamente.",
-                        cashReceivedInput = "",
-                    )
+                when (command.status) {
+                    PaymentStatus.CONFIRMED -> {
+                        _uiState.update {
+                            it.copy(
+                                isSubmitting = false,
+                                lastPaymentCommand = command,
+                                successMessage = "Pago de ${formatPesos(totalPaymentCents)} confirmado.",
+                                cashReceivedInput = "",
+                            )
+                        }
+                        // Sólo un pago confirmado puede cerrar el flujo de cobro.
+                        orderRepository.refreshOrders()
+                        onPaymentSuccess?.invoke()
+                    }
+                    PaymentStatus.PENDING_SYNC -> {
+                        _uiState.update {
+                            it.copy(
+                                isSubmitting = false,
+                                lastPaymentCommand = command,
+                                successMessage = "Pago guardado y pendiente de sincronizar. No lo vuelvas a capturar.",
+                            )
+                        }
+                    }
+                    PaymentStatus.REJECTED -> {
+                        _uiState.update {
+                            it.copy(
+                                isSubmitting = false,
+                                lastPaymentCommand = command,
+                                errorMessage = paymentRejectionMessage(command.errorCode),
+                            )
+                        }
+                    }
                 }
-                // Refrescar órdenes para actualizar saldos y estado cerrado si liquidó
-                orderRepository.refreshOrders()
-                onPaymentSuccess?.invoke()
             }.onFailure { err ->
                 val errorMsg = when {
                     err.message?.contains("saldo pendiente", ignoreCase = true) == true ->
@@ -372,5 +406,11 @@ class PaymentViewModel @Inject constructor(
     private fun formatPesos(cents: Long): String {
         val pesos = cents / 100.0
         return String.format("$%.2f", pesos)
+    }
+
+    private fun paymentRejectionMessage(errorCode: String?): String = when (errorCode?.lowercase()) {
+        "insufficient_stock", "stock_insufficient" -> "Stock insuficiente en almacén para completar el cobro."
+        "insufficient_balance", "payment_exceeds_balance" -> "El pago supera el saldo pendiente de la comanda."
+        else -> "Supabase rechazó el pago${errorCode?.let { " ($it)" }.orEmpty()}. Verifica la comanda antes de reintentar."
     }
 }

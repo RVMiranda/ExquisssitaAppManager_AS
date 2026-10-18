@@ -1,6 +1,7 @@
 package com.mirandadevsource.exquisssitaappmanager.data.repository
 
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.InventoryCommandDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.SyncExecutionLeaseDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.ProductDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.StockMovementDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.InventoryCommandEntity
@@ -14,8 +15,12 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.remote.dto.Updat
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.data.mappers.toDomain
 import com.mirandadevsource.exquisssitaappmanager.data.mappers.toEntity
+import com.mirandadevsource.exquisssitaappmanager.data.sync.SyncExecutionMutex
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.AuthState
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.InventoryCommand
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.DataPage
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.pageFromFetchedWindow
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.InventoryCommandStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.InventoryFailureCode
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.InventoryMovementType
@@ -38,8 +43,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import javax.inject.Inject
 
@@ -50,18 +53,15 @@ class InventoryRepositoryImpl @Inject constructor(
     private val stockMovementDao: StockMovementDao,
     private val commandDao: InventoryCommandDao,
     private val authRepository: AuthRepository,
+    private val leaseDao: SyncExecutionLeaseDao,
 ) : InventoryRepository {
-
-    private val syncMutex = Mutex()
 
     override suspend fun getProducts(includeInactive: Boolean): Result<List<Product>> {
         if (!networkMonitor.isOnline()) return readProductCache(includeInactive)
         syncPendingCommands()
         return try {
             // Download inactive rows too, so soft-deactivation propagates to local reads.
-            val remote = supabase.from(PRODUCTS_TABLE)
-                .select(columns = PRODUCT_COLUMNS)
-                .decodeList<ProductDto>()
+            val remote = fetchAllProducts()
             productDao.upsertAll(remote.map { it.toEntity() })
             readProductCache(includeInactive)
         } catch (cancelled: CancellationException) {
@@ -69,6 +69,26 @@ class InventoryRepositoryImpl @Inject constructor(
         } catch (failure: Exception) {
             if (failure.isNetworkFailure()) readProductCache(includeInactive)
             else Result.failure(failure)
+        }
+    }
+
+    override suspend fun getProductPage(includeInactive: Boolean, page: PageRequest): Result<DataPage<Product>> {
+        val scope = "products:${if (includeInactive) "all" else "active"}"
+        if (!networkMonitor.isOnline()) return readProductPage(includeInactive, page, scope)
+        return try {
+            val rows = supabase.from(PRODUCTS_TABLE).select(columns = PRODUCT_COLUMNS) {
+                if (!includeInactive) filter { eq("activo", true) }
+                order("categoria", Order.ASCENDING)
+                order("nombre", Order.ASCENDING)
+                order("id", Order.ASCENDING)
+                range(page.offset.toLong()..(page.offset + page.limit).toLong())
+            }.decodeList<ProductDto>()
+            productDao.upsertAll(rows.map { it.toEntity() })
+            Result.success(pageFromFetchedWindow(rows.map { it.toEntity().toDomain() }, page, scope))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            if (failure.isNetworkFailure()) readProductPage(includeInactive, page, scope) else Result.failure(failure)
         }
     }
 
@@ -219,7 +239,7 @@ class InventoryRepositoryImpl @Inject constructor(
         }
 
         return try {
-            syncMutex.withLock {
+            val acquired = SyncExecutionMutex.withActorLease(session.userId, leaseDao) {
                 val commands = commandDao.getRecoverableCommandsForActor(
                     session.userId,
                     System.currentTimeMillis(),
@@ -232,7 +252,8 @@ class InventoryRepositoryImpl @Inject constructor(
                     }
                 }
             }
-            Result.success(Unit)
+            if (acquired) Result.success(Unit)
+            else Result.failure(IllegalStateException("La sincronización de esta cuenta ya está activa en otra ejecución."))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -384,6 +405,29 @@ class InventoryRepositoryImpl @Inject constructor(
         Result.failure(failure)
     }
 
+    private suspend fun readProductPage(includeInactive: Boolean, page: PageRequest, scope: String): Result<DataPage<Product>> = try {
+        val rows = productDao.getProductPage(includeInactive, page.limit + 1, page.offset).map { it.toDomain() }
+        Result.success(pageFromFetchedWindow(rows, page, scope, fetchedAt = null))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        Result.failure(failure)
+    }
+
+    private suspend fun fetchAllProducts(): List<ProductDto> {
+        val rows = mutableListOf<ProductDto>()
+        var offset = 0L
+        while (true) {
+            val page = supabase.from(PRODUCTS_TABLE).select(columns = PRODUCT_COLUMNS) {
+                order("id", Order.ASCENDING)
+                range(offset..(offset + SNAPSHOT_PAGE_SIZE - 1))
+            }.decodeList<ProductDto>()
+            rows += page
+            if (page.size.toLong() < SNAPSHOT_PAGE_SIZE) return rows
+            offset += SNAPSHOT_PAGE_SIZE
+        }
+    }
+
     private suspend fun readMovementCache(
         productId: String,
         offset: Int,
@@ -424,6 +468,7 @@ class InventoryRepositoryImpl @Inject constructor(
     }
 
     private companion object {
+        const val SNAPSHOT_PAGE_SIZE = 500L
         const val PRODUCTS_TABLE = "productos"
         const val MOVEMENTS_TABLE = "movimientos_inventario"
         const val REGISTER_MOVEMENT_RPC = "registrar_movimiento_inventario"

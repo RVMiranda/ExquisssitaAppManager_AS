@@ -3,6 +3,7 @@ package com.mirandadevsource.exquisssitaappmanager.data.repository
 import androidx.room.withTransaction
 import com.mirandadevsource.exquisssitaappmanager.core.database.AppDatabase
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderCommandDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.SyncExecutionLeaseDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.TableDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.OrderCommandEntity
@@ -19,6 +20,7 @@ import com.mirandadevsource.exquisssitaappmanager.domain.repository.TableReposit
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -36,11 +38,12 @@ class TableRepositoryImpl @Inject constructor(
     supabase: SupabaseClient,
     networkMonitor: NetworkMonitor,
     commandDao: OrderCommandDao,
+    leaseDao: SyncExecutionLeaseDao,
     authRepository: AuthRepository,
     private val database: AppDatabase,
     private val tableDao: TableDao,
     private val orderDao: OrderDao,
-) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository), TableRepository {
+) : OrderSyncSupport(supabase, networkMonitor, commandDao, authRepository, leaseDao), TableRepository {
 
     override fun observeTables(): Flow<List<Table>> = authRepository.state.flatMapLatest { state ->
         val actor = (state as? AuthState.SignedIn)?.session?.userId ?: return@flatMapLatest flowOf(emptyList())
@@ -52,8 +55,8 @@ class TableRepositoryImpl @Inject constructor(
         if (!networkMonitor.isOnline() || !hasRemoteSession()) return Result.success(Unit)
         return try {
             syncActorCommands()
-            val remote = supabase.from(TABLES).select(columns = TABLE_COLUMNS).decodeList<TableDto>()
-            val remoteOrders = supabase.from(ORDERS).select(columns = ORDER_COLUMNS).decodeList<OrderDto>()
+            val remote = fetchAllTables()
+            val remoteOrders = fetchAllOrders()
             val remoteIds = remote.mapTo(hashSetOf()) { it.id }
             database.withTransaction {
                 tableDao.getAll().filter { it.actorUserId == actor && it.syncState == TableEntity.PENDING && it.id !in remoteIds && commandDao.countPendingForEntity(actor, it.id) == 0 }
@@ -118,7 +121,36 @@ class TableRepositoryImpl @Inject constructor(
         Result.failure(failure)
     }
 
+    private suspend fun fetchAllTables(): List<TableDto> {
+        val rows = mutableListOf<TableDto>()
+        var offset = 0L
+        while (true) {
+            val page = supabase.from(TABLES).select(columns = TABLE_COLUMNS) {
+                order("id", Order.ASCENDING)
+                range(offset..(offset + SNAPSHOT_PAGE_SIZE - 1))
+            }.decodeList<TableDto>()
+            rows += page
+            if (page.size.toLong() < SNAPSHOT_PAGE_SIZE) return rows
+            offset += SNAPSHOT_PAGE_SIZE
+        }
+    }
+
+    private suspend fun fetchAllOrders(): List<OrderDto> {
+        val rows = mutableListOf<OrderDto>()
+        var offset = 0L
+        while (true) {
+            val page = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) {
+                order("id", Order.ASCENDING)
+                range(offset..(offset + SNAPSHOT_PAGE_SIZE - 1))
+            }.decodeList<OrderDto>()
+            rows += page
+            if (page.size.toLong() < SNAPSHOT_PAGE_SIZE) return rows
+            offset += SNAPSHOT_PAGE_SIZE
+        }
+    }
+
     private companion object {
+        const val SNAPSHOT_PAGE_SIZE = 500L
         const val TABLES = "mesas"
         const val ORDERS = "ordenes"
         val TABLE_COLUMNS = Columns.list("id, numero_mesa, estado, created_at, updated_at, sync_version")

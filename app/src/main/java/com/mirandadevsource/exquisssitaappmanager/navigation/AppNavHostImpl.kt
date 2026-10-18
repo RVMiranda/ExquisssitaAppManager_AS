@@ -1,31 +1,35 @@
 package com.mirandadevsource.exquisssitaappmanager.navigation
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.platform.LocalAutofillManager
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.mirandadevsource.exquisssitaappmanager.features.auth.AuthLoadingScreen
 import com.mirandadevsource.exquisssitaappmanager.features.auth.AuthUiEvent
 import com.mirandadevsource.exquisssitaappmanager.features.auth.AuthUiStage
 import com.mirandadevsource.exquisssitaappmanager.features.auth.AuthViewModel
-import com.mirandadevsource.exquisssitaappmanager.features.auth.AuthLoadingScreen
 import com.mirandadevsource.exquisssitaappmanager.features.auth.LoginScreen
 import com.mirandadevsource.exquisssitaappmanager.features.main.MainScaffold
 
+/**
+ * Shell de navegación raíz con aislamiento estricto de sesión (F01 / SEC-01).
+ *
+ * Separa de forma absoluta el ámbito autenticado de la pantalla de login:
+ * - Cuando la sesión se cierra (o expira), el grafo autenticado y sus ViewModels
+ *   son destruidos inmediatamente mediante [key].
+ * - [LoginScreen] se presenta como única raíz composable; el botón Atrás no tiene
+ *   ningún destino previo al cual regresar y cierra la aplicación.
+ * - [MainScaffold] nunca se renderiza si la sesión es nula.
+ */
 @Composable
 fun AppNavHost(authViewModel: AuthViewModel) {
-    val navController = rememberNavController()
     val uiState by authViewModel.uiState.collectAsStateWithLifecycle()
-    val currentEntry by navController.currentBackStackEntryAsState()
     val autofillManager = LocalAutofillManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -43,46 +47,25 @@ fun AppNavHost(authViewModel: AuthViewModel) {
         }
     }
 
-    LaunchedEffect(uiState.stage) {
-        val currentRoute = navController.currentDestination?.route
-        when (uiState.stage) {
-            AuthUiStage.CHECKING -> Unit
-            AuthUiStage.SIGNED_OUT -> {
-                if (currentRoute != null && currentRoute != AppRoutes.LOGIN) {
-                    navController.navigate(AppRoutes.LOGIN) {
-                        popUpTo(AppRoutes.LOGIN) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                }
-            }
-            AuthUiStage.SIGNED_IN, AuthUiStage.OFFLINE -> {
-                if (currentRoute != AppRoutes.MAIN) {
-                    navController.navigate(AppRoutes.MAIN) {
-                        popUpTo(AppRoutes.LOGIN) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                }
-            }
+    when (uiState.stage) {
+        AuthUiStage.CHECKING -> {
+            AuthLoadingScreen()
         }
-    }
-
-    NavHost(
-        navController = navController,
-        startDestination = AppRoutes.LOGIN,
-        modifier = androidx.compose.ui.Modifier.fillMaxSize(),
-    ) {
-        composable(AppRoutes.LOGIN) {
-            if (uiState.stage == AuthUiStage.CHECKING) {
-                AuthLoadingScreen()
+        AuthUiStage.SIGNED_OUT -> {
+            LoginScreen(viewModel = authViewModel)
+        }
+        AuthUiStage.SIGNED_IN, AuthUiStage.OFFLINE -> {
+            val session = uiState.session
+            if (session != null) {
+                key(session.userId, session.startedAtEpochMillis) {
+                    MainScaffold(
+                        session = session,
+                        onSignOut = authViewModel::signOut,
+                    )
+                }
             } else {
                 LoginScreen(viewModel = authViewModel)
             }
-        }
-        composable(AppRoutes.MAIN) {
-            MainScaffold(
-                session = uiState.session,
-                onSignOut = authViewModel::signOut,
-            )
         }
     }
 }

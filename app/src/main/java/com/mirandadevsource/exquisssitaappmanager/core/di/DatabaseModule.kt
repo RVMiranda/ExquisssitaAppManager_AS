@@ -17,6 +17,8 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderCommand
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.TransactionDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.PromotionDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.DailyClosureDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.CustomerCacheDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.SyncExecutionLeaseDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -36,6 +38,9 @@ object DatabaseModule {
             .addMigrations(MIGRATION_3_4)
             .addMigrations(MIGRATION_4_5)
             .addMigrations(MIGRATION_5_6)
+            .addMigrations(MIGRATION_6_7)
+            .addMigrations(MIGRATION_7_8)
+            .addMigrations(MIGRATION_8_9)
             .build()
 
     @Provides
@@ -73,6 +78,12 @@ object DatabaseModule {
 
     @Provides
     fun provideDailyClosureDao(database: AppDatabase): DailyClosureDao = database.dailyClosureDao()
+
+    @Provides
+    fun provideCustomerCacheDao(database: AppDatabase): CustomerCacheDao = database.customerCacheDao()
+
+    @Provides
+    fun provideSyncExecutionLeaseDao(database: AppDatabase): SyncExecutionLeaseDao = database.syncExecutionLeaseDao()
 
     private const val DATABASE_NAME = "exquisssita_manager.db"
 
@@ -226,6 +237,50 @@ object DatabaseModule {
                 PRIMARY KEY(`id`)
             )""")
             db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_cash_cut_cache_businessDate_cutNumber` ON `cash_cut_cache` (`businessDate`, `cutNumber`)")
+        }
+    }
+
+    private val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // Preserve old rows, but leave their actor unknown. Sync queries explicitly exclude NULL.
+            db.execSQL("ALTER TABLE employee_cache ADD COLUMN `cacheActorUserId` TEXT")
+            db.execSQL("ALTER TABLE employee_cache ADD COLUMN `updateActorUserId` TEXT")
+            db.execSQL("ALTER TABLE employee_cache ADD COLUMN `conflictServerJson` TEXT")
+            db.execSQL("DROP INDEX IF EXISTS `index_employee_cache_remoteId` ")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_employee_cache_remoteId_cacheActorUserId` ON `employee_cache` (`remoteId`, `cacheActorUserId`)")
+            db.execSQL("ALTER TABLE payroll_record_cache ADD COLUMN `cacheActorUserId` TEXT")
+            db.execSQL("DROP INDEX IF EXISTS `index_payroll_record_cache_remoteId` ")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_payroll_record_cache_remoteId_cacheActorUserId` ON `payroll_record_cache` (`remoteId`, `cacheActorUserId`)")
+            db.execSQL("ALTER TABLE payroll_payment_intents ADD COLUMN `actorUserId` TEXT")
+        }
+    }
+
+    private val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `customer_profile_cache` (
+                `id` TEXT NOT NULL,
+                `cacheActorUserId` TEXT NOT NULL,
+                `nombre` TEXT NOT NULL,
+                `telefono` TEXT,
+                `visitasTotales` INTEGER NOT NULL,
+                `puntosLealtad` INTEGER NOT NULL,
+                `fechaRegistro` TEXT,
+                `fetchedAtMillis` INTEGER NOT NULL,
+                PRIMARY KEY(`id`, `cacheActorUserId`)
+            )""")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_customer_profile_cache_cacheActorUserId_telefono` ON `customer_profile_cache` (`cacheActorUserId`, `telefono`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_customer_profile_cache_cacheActorUserId_fetchedAtMillis` ON `customer_profile_cache` (`cacheActorUserId`, `fetchedAtMillis`)")
+        }
+    }
+
+    private val MIGRATION_8_9 = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `sync_execution_leases` (
+                `actorUserId` TEXT NOT NULL,
+                `leaseOwner` TEXT NOT NULL,
+                `leaseUntilMillis` INTEGER NOT NULL,
+                PRIMARY KEY(`actorUserId`)
+            )""")
         }
     }
 }

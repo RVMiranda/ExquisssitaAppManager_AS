@@ -17,6 +17,14 @@ data class PayrollUiState(
     val paymentDateInput: String = LocalDate.now().toString(),
     val paymentNotesInput: String = "",
     val isRegisteringPayment: Boolean = false,
+    val viewingHistoryEmployee: WeeklyPayrollItem? = null,
+    val historyPayments: List<com.mirandadevsource.exquisssitaappmanager.domain.entity.EmployeePayment> = emptyList(),
+    val isLoadingHistory: Boolean = false,
+    val isLoadingHistoryPage: Boolean = false,
+    val historyHasMore: Boolean = false,
+    val historyNextOffset: Int? = null,
+    val historyFetchedAt: java.time.Instant? = null,
+    val historyError: String? = null,
 ) {
     val weekStartMonday: LocalDate
         get() = referenceDate.with(DayOfWeek.MONDAY)

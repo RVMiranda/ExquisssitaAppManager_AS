@@ -3,6 +3,7 @@ package com.mirandadevsource.exquisssitaappmanager.core.di
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.ProductDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.InventoryCommandDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.StockMovementDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.SyncExecutionLeaseDao
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.data.repository.InventoryRepositoryImpl
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.InventoryRepository
@@ -26,6 +27,7 @@ object InventoryModule {
         stockMovementDao: StockMovementDao,
         inventoryCommandDao: InventoryCommandDao,
         authRepository: AuthRepository,
+        syncExecutionLeaseDao: SyncExecutionLeaseDao,
     ): InventoryRepository = InventoryRepositoryImpl(
         supabaseClient,
         networkMonitor,
@@ -33,5 +35,6 @@ object InventoryModule {
         stockMovementDao,
         inventoryCommandDao,
         authRepository,
+        syncExecutionLeaseDao,
     )
 }

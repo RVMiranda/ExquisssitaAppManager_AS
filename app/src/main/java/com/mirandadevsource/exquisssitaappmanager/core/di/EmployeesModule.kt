@@ -4,6 +4,7 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.dao.EmployeeDao
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.data.repository.EmployeeRepositoryImpl
 import com.mirandadevsource.exquisssitaappmanager.data.sync.EmployeesPayrollSyncCoordinator
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.EmployeeRepository
 import dagger.Module
 import dagger.Provides
@@ -22,10 +23,12 @@ object EmployeesModule {
         networkMonitor: NetworkMonitor,
         employeeDao: EmployeeDao,
         syncCoordinator: EmployeesPayrollSyncCoordinator,
+        authRepository: AuthRepository,
     ): EmployeeRepository = EmployeeRepositoryImpl(
         supabaseClient,
         networkMonitor,
         employeeDao,
         syncCoordinator,
+        authRepository,
     )
 }

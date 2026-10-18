@@ -104,6 +104,15 @@ class AuthViewModel @Inject constructor(
     }
 
     fun signOut() {
+        sessionExpiryJob?.cancel()
+        mutableUiState.update {
+            it.copy(
+                stage = AuthUiStage.SIGNED_OUT,
+                session = null,
+                isSubmitting = false,
+                password = "",
+            )
+        }
         viewModelScope.launch {
             runCatching { signOutUseCase() }
                 .onFailure { failure ->
@@ -115,7 +124,23 @@ class AuthViewModel @Inject constructor(
     fun checkSessionExpiry() {
         val session = mutableUiState.value.session ?: return
         if (System.currentTimeMillis() - session.startedAtEpochMillis >= SESSION_LIMIT_MILLIS) {
-            signOut()
+            expireSession()
+        }
+    }
+
+    private fun expireSession() {
+        sessionExpiryJob?.cancel()
+        mutableUiState.update {
+            it.copy(
+                stage = AuthUiStage.SIGNED_OUT,
+                session = null,
+                isSubmitting = false,
+                password = "",
+                errorMessage = "Tu sesión ha expirado por seguridad (límite de 10 horas). Inicia sesión nuevamente.",
+            )
+        }
+        viewModelScope.launch {
+            runCatching { authRepository.expireSession() }
         }
     }
 
@@ -124,7 +149,7 @@ class AuthViewModel @Inject constructor(
         val remaining = (startedAt + SESSION_LIMIT_MILLIS - System.currentTimeMillis()).coerceAtLeast(0)
         sessionExpiryJob = viewModelScope.launch {
             delay(remaining)
-            authRepository.expireSession()
+            expireSession()
         }
     }
 

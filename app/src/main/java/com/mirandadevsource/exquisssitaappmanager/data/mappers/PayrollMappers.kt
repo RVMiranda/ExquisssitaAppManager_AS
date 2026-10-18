@@ -34,9 +34,10 @@ fun PayrollRecordEntity.toDomain(): EmployeePayment = EmployeePayment(
     syncStatus = PaymentSyncStatus.CONFIRMED,
 )
 
-fun EmployeePaymentDto.toEntity(employeeLocalId: String? = null): PayrollRecordEntity = PayrollRecordEntity(
-    localId = id,
+fun EmployeePaymentDto.toEntity(employeeLocalId: String? = null, cacheActorUserId: String? = null): PayrollRecordEntity = PayrollRecordEntity(
+    localId = cacheActorUserId?.let { "$it:$id" } ?: id,
     remoteId = id,
+    cacheActorUserId = cacheActorUserId,
     employeeLocalId = employeeLocalId,
     empleadoIdRemote = empleadoId,
     montoCents = monto,
