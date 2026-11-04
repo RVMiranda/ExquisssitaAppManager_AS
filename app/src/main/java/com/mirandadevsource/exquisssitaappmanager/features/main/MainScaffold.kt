@@ -87,8 +87,11 @@ import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payroll.PayrollViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.promotions.PromotionsScreen
 import com.mirandadevsource.exquisssitaappmanager.features.promotions.PromotionsViewModel
+import androidx.compose.material.icons.outlined.CardGiftcard
 import com.mirandadevsource.exquisssitaappmanager.features.orders.OrderViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.orders.OrdersScreen
+import com.mirandadevsource.exquisssitaappmanager.features.rewards.RewardsCatalogScreen
+import com.mirandadevsource.exquisssitaappmanager.features.rewards.RewardsCatalogViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.tables.TablesScreen
 import com.mirandadevsource.exquisssitaappmanager.features.tables.TablesViewModel
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ApricotIllusion
@@ -107,6 +110,7 @@ enum class MainNavDestination(
     LOYALTY("Lealtad y QR", Icons.Outlined.QrCodeScanner),
     INVENTORY("Menú e Inventario", Icons.Outlined.Inventory2),
     PROMOTIONS("Promociones y Ofertas", Icons.Outlined.Campaign, requiresManagerAccess = true),
+    REWARDS("Recompensas", Icons.Outlined.CardGiftcard, requiresManagerAccess = true),
     EMPLOYEES("Personal y Empleados", Icons.Outlined.People, requiresManagerAccess = true),
     PAYROLL("Nómina Semanal", Icons.Outlined.Payments, requiresManagerAccess = true),
     TABLES("Mesas y Salón", Icons.Outlined.TableRestaurant),
@@ -137,6 +141,7 @@ private val DrawerNavGroups = listOf(
         destinations = listOf(
             MainNavDestination.LOYALTY,
             MainNavDestination.PROMOTIONS,
+            MainNavDestination.REWARDS,
         ),
     ),
     DrawerNavGroup(
@@ -547,6 +552,15 @@ fun MainScaffold(
                     MainNavDestination.PROMOTIONS -> {
                         val promotionsViewModel: PromotionsViewModel = hiltViewModel()
                         PromotionsScreen(viewModel = promotionsViewModel)
+                    }
+                    MainNavDestination.REWARDS -> {
+                        val rewardsViewModel: RewardsCatalogViewModel = hiltViewModel()
+                        RewardsCatalogScreen(
+                            viewModel = rewardsViewModel,
+                            onBackToDashboard = {
+                                currentDestination = MainNavDestination.DASHBOARD
+                            },
+                        )
                     }
                     MainNavDestination.EMPLOYEES -> {
                         val employeesViewModel: EmployeesViewModel = hiltViewModel()

@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.mirandadevsource.exquisssitaappmanager.core.utils.DateUtils
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Table
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.TableStatus
@@ -1020,7 +1021,7 @@ private fun TableDetailDialog(
                                                 color = ChocolateFondant,
                                             )
                                             Text(
-                                                text = "Apertura: ${order.openedAt.take(16).replace('T', ' ')}",
+                                                text = "Apertura: ${DateUtils.formatOrderDateTime(order.openedAt)}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = ChocolateFondant.copy(alpha = 0.7f),
                                             )

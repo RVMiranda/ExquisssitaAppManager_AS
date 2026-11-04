@@ -94,9 +94,11 @@ class AuthViewModel @Inject constructor(
                 loginUseCase(current.email, current.password)
                 mutableEvents.emit(AuthUiEvent.LoginSucceeded)
             } catch (failure: AuthFailure) {
+                android.util.Log.e("EXQUISSSITA_AUTH", "Login failed (AuthFailure): ${failure.reason}", failure)
                 mutableUiState.update { it.copy(errorMessage = messageFor(failure)) }
-            } catch (_: Exception) {
-                mutableUiState.update { it.copy(errorMessage = messageFor(null)) }
+            } catch (e: Exception) {
+                android.util.Log.e("EXQUISSSITA_AUTH", "Login failed (Exception): ${e.message}", e)
+                mutableUiState.update { it.copy(errorMessage = messageFor(e)) }
             } finally {
                 mutableUiState.update { it.copy(isSubmitting = false, password = "") }
             }
@@ -159,7 +161,14 @@ class AuthViewModel @Inject constructor(
         AuthFailureReason.INVALID_CREDENTIALS -> "El correo o la contraseña no son correctos."
         AuthFailureReason.NETWORK -> "No se pudo conectar. Revisa tu conexión e inténtalo de nuevo."
         AuthFailureReason.NOT_AUTHORIZED -> "La cuenta no tiene acceso activo. Contacta al administrador."
-        AuthFailureReason.UNKNOWN, null -> "No se pudo iniciar sesión. Inténtalo de nuevo."
+        AuthFailureReason.UNKNOWN, null -> {
+            val detail = failure?.cause?.message ?: failure?.message
+            if (!detail.isNullOrBlank() && detail != "null") {
+                "No se pudo iniciar sesión: $detail"
+            } else {
+                "No se pudo iniciar sesión. Inténtalo de nuevo."
+            }
+        }
     }
 
     private companion object {

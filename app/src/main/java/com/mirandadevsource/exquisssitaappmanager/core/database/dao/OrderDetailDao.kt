@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface OrderDetailDao {
-    @Query("SELECT d.* FROM order_detail_cache d JOIN order_cache o ON o.id = d.ordenId WHERE d.ordenId = :orderId AND o.actorUserId = :actorId ORDER BY d.createdAt, d.id")
+    @Query("SELECT d.* FROM order_detail_cache d JOIN order_cache o ON o.id = d.ordenId WHERE d.ordenId = :orderId AND (o.actorUserId = :actorId OR o.syncState = 'SYNCED') ORDER BY d.createdAt, d.id")
     fun observeForOrder(orderId: String, actorId: String): Flow<List<OrderDetailEntity>>
 
     @Query("SELECT * FROM order_detail_cache WHERE id = :id LIMIT 1")

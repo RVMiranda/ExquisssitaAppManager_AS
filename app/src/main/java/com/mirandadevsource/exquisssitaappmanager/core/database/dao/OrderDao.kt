@@ -10,19 +10,19 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface OrderDao {
-    @Query("SELECT * FROM order_cache WHERE actorUserId = :actorId ORDER BY fechaApertura DESC")
+    @Query("SELECT * FROM order_cache WHERE actorUserId = :actorId OR syncState = 'SYNCED' ORDER BY fechaApertura DESC")
     fun observeAll(actorId: String): Flow<List<OrderEntity>>
 
-    @Query("SELECT * FROM order_cache WHERE actorUserId = :actorId ORDER BY fechaApertura DESC")
+    @Query("SELECT * FROM order_cache WHERE actorUserId = :actorId OR syncState = 'SYNCED' ORDER BY fechaApertura DESC")
     suspend fun getAllForActor(actorId: String): List<OrderEntity>
 
-    @Query("SELECT * FROM order_cache WHERE actorUserId = :actorId AND (:openOnly = 0 OR estado = 'Abierta') AND (:fromInclusive IS NULL OR fechaApertura >= :fromInclusive) AND (:toExclusive IS NULL OR fechaApertura < :toExclusive) ORDER BY fechaApertura DESC, id DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM order_cache WHERE (actorUserId = :actorId OR syncState = 'SYNCED') AND (:openOnly = 0 OR estado = 'Abierta') AND (:fromInclusive IS NULL OR fechaApertura >= :fromInclusive) AND (:toExclusive IS NULL OR fechaApertura < :toExclusive) ORDER BY fechaApertura DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun getPage(actorId: String, openOnly: Boolean, fromInclusive: String?, toExclusive: String?, limit: Int, offset: Int): List<OrderEntity>
 
-    @Query("SELECT * FROM order_cache WHERE mesaId = :tableId AND actorUserId = :actorId ORDER BY fechaApertura DESC")
+    @Query("SELECT * FROM order_cache WHERE mesaId = :tableId AND (actorUserId = :actorId OR syncState = 'SYNCED') ORDER BY fechaApertura DESC")
     fun observeForTable(tableId: String, actorId: String): Flow<List<OrderEntity>>
 
-    @Query("SELECT * FROM order_cache WHERE id = :orderId AND actorUserId = :actorId LIMIT 1")
+    @Query("SELECT * FROM order_cache WHERE id = :orderId AND (actorUserId = :actorId OR syncState = 'SYNCED') LIMIT 1")
     fun observeById(orderId: String, actorId: String): Flow<OrderEntity?>
 
     @Query("SELECT * FROM order_cache WHERE id = :orderId LIMIT 1")

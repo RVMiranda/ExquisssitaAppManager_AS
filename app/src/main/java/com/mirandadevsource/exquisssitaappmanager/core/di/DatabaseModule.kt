@@ -41,6 +41,7 @@ object DatabaseModule {
             .addMigrations(MIGRATION_6_7)
             .addMigrations(MIGRATION_7_8)
             .addMigrations(MIGRATION_8_9)
+            .addMigrations(MIGRATION_9_10)
             .build()
 
     @Provides
@@ -281,6 +282,12 @@ object DatabaseModule {
                 `leaseUntilMillis` INTEGER NOT NULL,
                 PRIMARY KEY(`actorUserId`)
             )""")
+        }
+    }
+
+    private val MIGRATION_9_10 = object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE product_cache ADD COLUMN `precioAbierto` INTEGER NOT NULL DEFAULT 0")
         }
     }
 }

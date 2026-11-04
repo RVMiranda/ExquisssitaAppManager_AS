@@ -124,6 +124,7 @@ class AuthRepositoryImpl @Inject constructor(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
+            android.util.Log.e("EXQUISSSITA_AUTH", "Supabase signInWith failed: ${failure.message}", failure)
             throw when {
                 failure.isNetworkFailure() -> AuthFailure(AuthFailureReason.NETWORK, failure)
                 failure.looksLikeCredentialFailure() -> AuthFailure(AuthFailureReason.INVALID_CREDENTIALS, failure)
@@ -141,6 +142,7 @@ class AuthRepositoryImpl @Inject constructor(
             clearLocalSession()
             throw cancelled
         } catch (failure: Exception) {
+            android.util.Log.e("EXQUISSSITA_AUTH", "loadAndValidateProfile failed: ${failure.message}", failure)
             clearLocalSession()
             if (failure is AuthFailure) throw failure
             throw when {
