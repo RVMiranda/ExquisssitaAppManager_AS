@@ -406,6 +406,8 @@ fun InventoryScreen(
             onCategoriaChange = viewModel::onFormCategoriaChange,
             controlaInventario = uiState.formControlaInventario,
             onControlaInventarioChange = viewModel::onFormControlaInventarioChange,
+            precioAbierto = uiState.formPrecioAbierto,
+            onPrecioAbiertoChange = viewModel::onFormPrecioAbiertoChange,
             stockMinimo = uiState.formStockMinimo,
             onStockMinimoChange = viewModel::onFormStockMinimoChange,
             activo = uiState.formActivo,
@@ -707,7 +709,7 @@ private fun ProductCard(
 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = InventoryUiState.formatPrice(product.precioCentavos),
+                        text = if (product.precioAbierto) "Precio Libre" else InventoryUiState.formatPrice(product.precioCentavos),
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
@@ -715,7 +717,7 @@ private fun ProductCard(
                         color = BrandyBrown,
                     )
                     Text(
-                        text = "Precio unitario",
+                        text = if (product.precioAbierto) "Monto variable" else "Precio unitario",
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
                         color = ChocolateFondant.copy(alpha = 0.6f),
                     )
@@ -968,6 +970,8 @@ private fun ProductFormDialog(
     onCategoriaChange: (String) -> Unit,
     controlaInventario: Boolean,
     onControlaInventarioChange: (Boolean) -> Unit,
+    precioAbierto: Boolean,
+    onPrecioAbiertoChange: (Boolean) -> Unit,
     stockMinimo: String,
     onStockMinimoChange: (String) -> Unit,
     activo: Boolean,
@@ -1098,7 +1102,7 @@ private fun ProductFormDialog(
                 OutlinedTextField(
                     value = precioPesos,
                     onValueChange = onPrecioPesosChange,
-                    label = { Text("Precio en Pesos MXN (ej. 35.00)") },
+                    label = { Text(if (precioAbierto) "Precio base o sugerido (opcional)" else "Precio en Pesos MXN (ej. 35.00)") },
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -1110,7 +1114,7 @@ private fun ProductFormDialog(
 
                 Spacer(Modifier.height(14.dp))
 
-                // Toggle Controla Inventario
+                // Toggle Precio Abierto / Monto Libre
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1118,20 +1122,20 @@ private fun ProductFormDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Controlar existencias",
+                            text = "Precio abierto / Monto libre",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                             color = ChocolateFondant,
                         )
                         Text(
-                            text = if (controlaInventario) "Lleva conteo de stock físico" else "Insumo continuo sin límite",
+                            text = if (precioAbierto) "Permite teclear el importe libre en comanda (ej. carne a granel)" else "Precio fijo asignado desde el catálogo",
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                             color = ChocolateFondant.copy(alpha = 0.65f),
                         )
                     }
                     Switch(
-                        checked = controlaInventario,
-                        onCheckedChange = onControlaInventarioChange,
+                        checked = precioAbierto,
+                        onCheckedChange = onPrecioAbiertoChange,
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
                             checkedTrackColor = BrandyBrown,
@@ -1141,20 +1145,69 @@ private fun ProductFormDialog(
                     )
                 }
 
-                if (controlaInventario) {
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = stockMinimo,
-                        onValueChange = onStockMinimoChange,
-                        label = { Text("Stock Mínimo para Alerta") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BrandyBrown,
-                            unfocusedBorderColor = ApricotIllusion,
-                        ),
+                Spacer(Modifier.height(14.dp))
+
+                // Toggle Controla Inventario (deshabilitado si precio abierto)
+                if (!precioAbierto) {
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                    )
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Controlar existencias",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = ChocolateFondant,
+                            )
+                            Text(
+                                text = if (controlaInventario) "Lleva conteo de stock físico" else "Insumo continuo sin límite",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = ChocolateFondant.copy(alpha = 0.65f),
+                            )
+                        }
+                        Switch(
+                            checked = controlaInventario,
+                            onCheckedChange = onControlaInventarioChange,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = BrandyBrown,
+                                uncheckedThumbColor = ApricotIllusion,
+                                uncheckedTrackColor = VanillaCustard,
+                            ),
+                        )
+                    }
+
+                    if (controlaInventario) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = stockMinimo,
+                            onValueChange = onStockMinimoChange,
+                            label = { Text("Stock Mínimo para Alerta") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BrandyBrown,
+                                unfocusedBorderColor = ApricotIllusion,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = VanillaCustard.copy(alpha = 0.6f),
+                        border = BorderStroke(1.dp, ApricotIllusion.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = "Los productos con precio abierto no descuentan inventario físico por unidad, permitiendo ventas por cualquier importe variable.",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = ChocolateFondant.copy(alpha = 0.75f),
+                            modifier = Modifier.padding(10.dp),
+                        )
+                    }
                 }
 
                 if (isEditing) {

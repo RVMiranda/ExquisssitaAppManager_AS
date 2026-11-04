@@ -10,6 +10,7 @@ data class ProductDto(
     val precio: Long,
     val categoria: String,
     @SerialName("controla_inventario") val controlaInventario: Boolean,
+    @SerialName("precio_abierto") val precioAbierto: Boolean = false,
     @SerialName("stock_actual") val stockActual: Int? = null,
     @SerialName("stock_minimo") val stockMinimo: Int? = null,
     val activo: Boolean,
@@ -25,6 +26,7 @@ data class CreateProductRequestDto(
     val precio: Long,
     val categoria: String,
     @SerialName("controla_inventario") val controlaInventario: Boolean,
+    @SerialName("precio_abierto") val precioAbierto: Boolean = false,
     @SerialName("stock_minimo") val stockMinimo: Int? = 0,
     val activo: Boolean = true,
 )
@@ -35,6 +37,7 @@ data class UpdateProductRequestDto(
     val precio: Long,
     val categoria: String,
     @SerialName("controla_inventario") val controlaInventario: Boolean,
+    @SerialName("precio_abierto") val precioAbierto: Boolean = false,
     @SerialName("stock_minimo") val stockMinimo: Int? = 0,
     val activo: Boolean,
 )

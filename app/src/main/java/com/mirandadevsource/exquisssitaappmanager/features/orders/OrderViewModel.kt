@@ -29,7 +29,7 @@ class OrderViewModel @Inject constructor(
     private val paymentRepository: PaymentRepository,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(OrderUiState(isLoading = true))
+    private val _uiState = MutableStateFlow(OrderUiState(isLoading = true, scopeTab = OrderScopeTab.DEL_DIA))
     val uiState: StateFlow<OrderUiState> = _uiState.asStateFlow()
 
     private var detailsJob: Job? = null
@@ -75,6 +75,10 @@ class OrderViewModel @Inject constructor(
                     _uiState.update { it.copy(products = productList) }
                 }
         }
+    }
+
+    fun onScopeTabChange(tab: OrderScopeTab) {
+        _uiState.update { it.copy(scopeTab = tab) }
     }
 
     fun onSearchQueryChange(query: String) {
@@ -233,6 +237,7 @@ class OrderViewModel @Inject constructor(
                 selectedCategory = null,
                 selectedProduct = null,
                 itemQuantity = 1,
+                itemCustomPricePesos = "",
                 itemNotes = "",
                 addItemError = null,
                 isSubmittingItem = false,
@@ -244,6 +249,7 @@ class OrderViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 isAddItemDialogOpen = false,
+                itemCustomPricePesos = "",
                 addItemError = null,
                 isSubmittingItem = false,
             )
@@ -259,13 +265,21 @@ class OrderViewModel @Inject constructor(
     }
 
     fun onProductSelect(product: Product) {
+        val initialPrice = if (product.precioAbierto) {
+            if (product.precioCentavos > 0) String.format(java.util.Locale.US, "%.2f", product.precioCentavos / 100.0) else ""
+        } else ""
         _uiState.update {
             it.copy(
                 selectedProduct = product,
                 itemQuantity = 1,
+                itemCustomPricePesos = initialPrice,
                 addItemError = null,
             )
         }
+    }
+
+    fun onCustomPriceChange(priceText: String) {
+        _uiState.update { it.copy(itemCustomPricePesos = priceText, addItemError = null) }
     }
 
     fun onQuantityChange(quantity: Int) {
@@ -287,13 +301,30 @@ class OrderViewModel @Inject constructor(
             return
         }
 
+        val unitPriceCents = if (product.precioAbierto) {
+            val clean = currentState.itemCustomPricePesos.trim().replace("$", "").replace(",", "")
+            val decimal = clean.toBigDecimalOrNull()
+            if (decimal == null || decimal <= java.math.BigDecimal.ZERO) {
+                _uiState.update { it.copy(addItemError = "Ingresa un importe válido mayor a $0.00 para este producto.") }
+                return
+            }
+            try {
+                decimal.movePointRight(2).longValueExact()
+            } catch (_: Exception) {
+                _uiState.update { it.copy(addItemError = "Importe inválido.") }
+                return
+            }
+        } else {
+            product.precioCentavos
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingItem = true, addItemError = null) }
             val request = AddOrderItemRequest(
                 orderId = orderId,
                 productId = product.id,
                 quantity = currentState.itemQuantity,
-                unitPriceCents = product.precioCentavos,
+                unitPriceCents = unitPriceCents,
                 notes = currentState.itemNotes.trim().ifBlank { null },
             )
             val result = orderRepository.addItem(request)
@@ -302,6 +333,7 @@ class OrderViewModel @Inject constructor(
                     it.copy(
                         isAddItemDialogOpen = false,
                         isSubmittingItem = false,
+                        itemCustomPricePesos = "",
                         successMessage = "${product.nombre} agregado a la comanda.",
                     )
                 }

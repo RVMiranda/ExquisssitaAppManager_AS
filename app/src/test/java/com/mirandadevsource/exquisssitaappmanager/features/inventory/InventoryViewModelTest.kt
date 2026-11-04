@@ -236,6 +236,7 @@ class InventoryViewModelTest {
             categoria: String,
             controlaInventario: Boolean,
             stockMinimo: Int,
+            precioAbierto: Boolean,
         ): Result<Product> {
             val p = Product(
                 id = "created-${products.size + 1}",
@@ -243,6 +244,7 @@ class InventoryViewModelTest {
                 precioCentavos = precioCentavos,
                 categoria = categoria,
                 controlaInventario = controlaInventario,
+                precioAbierto = precioAbierto,
                 stockActual = 0,
                 stockMinimo = stockMinimo,
                 activo = true,
@@ -262,6 +264,7 @@ class InventoryViewModelTest {
             controlaInventario: Boolean,
             stockMinimo: Int,
             activo: Boolean,
+            precioAbierto: Boolean,
         ): Result<Product> {
             val idx = products.indexOfFirst { it.id == id }
             if (idx == -1) return Result.failure(NoSuchElementException())
@@ -270,6 +273,7 @@ class InventoryViewModelTest {
                 precioCentavos = precioCentavos,
                 categoria = categoria,
                 controlaInventario = controlaInventario,
+                precioAbierto = precioAbierto,
                 stockMinimo = stockMinimo,
                 activo = activo,
             )

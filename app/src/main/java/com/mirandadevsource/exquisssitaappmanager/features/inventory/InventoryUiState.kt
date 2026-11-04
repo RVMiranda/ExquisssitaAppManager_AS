@@ -40,6 +40,7 @@ data class InventoryUiState(
     val formPrecioPesos: String = "",
     val formCategoria: String = "",
     val formControlaInventario: Boolean = false,
+    val formPrecioAbierto: Boolean = false,
     val formStockMinimo: String = "0",
     val formActivo: Boolean = true,
     val isSavingProduct: Boolean = false,

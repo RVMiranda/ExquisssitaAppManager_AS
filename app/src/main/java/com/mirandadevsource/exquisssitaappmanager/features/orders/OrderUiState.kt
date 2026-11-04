@@ -1,5 +1,6 @@
 package com.mirandadevsource.exquisssitaappmanager.features.orders
 
+import com.mirandadevsource.exquisssitaappmanager.core.utils.DateUtils
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderDetail
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderStatus
@@ -8,6 +9,11 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentLineStatu
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Product
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.ServiceType
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Table
+
+enum class OrderScopeTab(val label: String) {
+    DEL_DIA("Comandas de Hoy"),
+    HISTORIAL("Historial"),
+}
 
 enum class OrderFilter(val label: String) {
     TODAS("Todas"),
@@ -21,6 +27,9 @@ data class OrderUiState(
     val isRefreshing: Boolean = false,
     val errorMessage: String? = null,
     val successMessage: String? = null,
+
+    // Ámbito de visualización (Hoy vs Historial)
+    val scopeTab: OrderScopeTab? = null,
 
     // Colecciones núcleo
     val orders: List<Order> = emptyList(),
@@ -56,6 +65,7 @@ data class OrderUiState(
     val selectedCategory: String? = null,
     val selectedProduct: Product? = null,
     val itemQuantity: Int = 1,
+    val itemCustomPricePesos: String = "",
     val itemNotes: String = "",
     val isSubmittingItem: Boolean = false,
     val addItemError: String? = null,
@@ -70,8 +80,19 @@ data class OrderUiState(
 
     val selectedOrder: Order? get() = orders.firstOrNull { it.id == selectedOrderId }
 
+    // Subconjuntos por ámbito temporal
+    val todayOrders: List<Order> get() = orders.filter {
+        it.status == OrderStatus.OPEN || DateUtils.isTodayInMexico(it.openedAt)
+    }
+
+    val historyOrders: List<Order> get() = orders.filter {
+        it.status != OrderStatus.OPEN && !DateUtils.isTodayInMexico(it.openedAt)
+    }
+
     // Métricas KPI
     val totalOrdersCount: Int get() = orders.size
+    val todayOrdersCount: Int get() = todayOrders.size
+    val historyOrdersCount: Int get() = historyOrders.size
     val openOrdersCount: Int get() = orders.count { it.status == OrderStatus.OPEN }
     val openTableOrdersCount: Int get() = orders.count { it.status == OrderStatus.OPEN && it.serviceType == ServiceType.TABLE }
     val openTakeoutOrdersCount: Int get() = orders.count { it.status == OrderStatus.OPEN && it.serviceType != ServiceType.TABLE }
@@ -79,7 +100,12 @@ data class OrderUiState(
     // Órdenes filtradas
     val filteredOrders: List<Order> get() {
         val mapOfTables = tableMap
-        return orders.filter { order ->
+        val baseList = when (scopeTab) {
+            OrderScopeTab.DEL_DIA -> todayOrders
+            OrderScopeTab.HISTORIAL -> historyOrders
+            null -> orders
+        }
+        return baseList.filter { order ->
             // Filtro por mesa específica si está asignado
             if (tableFilterId != null && order.tableId != tableFilterId) return@filter false
 

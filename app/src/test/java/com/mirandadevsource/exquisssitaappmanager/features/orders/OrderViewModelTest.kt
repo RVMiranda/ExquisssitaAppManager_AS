@@ -191,6 +191,24 @@ class OrderViewModelTest {
     }
 
     @Test
+    fun `OrderUiState scopeTab filters today vs historical orders`() {
+        val state = OrderUiState(orders = sampleOrders, tables = sampleTables)
+
+        // Sin scopeTab definido (null) retorna todas
+        assertEquals(4, state.filteredOrders.size)
+
+        // Con scopeTab DEL_DIA: incluye órdenes abiertas (ord-101 y ord-102)
+        val todayState = state.copy(scopeTab = OrderScopeTab.DEL_DIA)
+        assertEquals(2, todayState.filteredOrders.size)
+        assertTrue(todayState.filteredOrders.all { it.status == OrderStatus.OPEN })
+
+        // Con scopeTab HISTORIAL: incluye órdenes pasadas cerradas/canceladas (ord-103 y ord-104)
+        val historyState = state.copy(scopeTab = OrderScopeTab.HISTORIAL)
+        assertEquals(2, historyState.filteredOrders.size)
+        assertTrue(historyState.filteredOrders.all { it.status != OrderStatus.OPEN })
+    }
+
+    @Test
     fun `OrderUiState calculates monetary totals correctly`() {
         val state = OrderUiState(selectedOrderDetails = sampleDetails)
 

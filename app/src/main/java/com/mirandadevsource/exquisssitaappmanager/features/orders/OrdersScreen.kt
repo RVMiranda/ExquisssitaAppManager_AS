@@ -3,6 +3,7 @@ package com.mirandadevsource.exquisssitaappmanager.features.orders
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -83,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.mirandadevsource.exquisssitaappmanager.core.utils.DateUtils
 import com.mirandadevsource.exquisssitaappmanager.features.payments.CheckoutScreen
 import com.mirandadevsource.exquisssitaappmanager.features.payments.PaymentViewModel
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
@@ -188,9 +190,19 @@ fun OrdersScreen(
                     Spacer(Modifier.height(8.dp))
                 }
 
+                // Selector de Ámbito: Comandas de Hoy vs Historial
+                OrdersScopeSwitcher(
+                    selectedTab = uiState.scopeTab ?: OrderScopeTab.DEL_DIA,
+                    todayCount = uiState.todayOrders.size,
+                    historyCount = uiState.historyOrders.size,
+                    onTabSelected = viewModel::onScopeTabChange,
+                )
+
+                Spacer(Modifier.height(10.dp))
+
                 // Banner de Métricas Operativas (KPIs)
                 OrdersKpiBanner(
-                    totalOrders = uiState.totalOrdersCount,
+                    totalOrders = if (uiState.scopeTab == OrderScopeTab.HISTORIAL) uiState.historyOrders.size else uiState.todayOrders.size,
                     openOrders = uiState.openOrdersCount,
                     openTableOrders = uiState.openTableOrdersCount,
                     openTakeoutOrders = uiState.openTakeoutOrdersCount,
@@ -269,6 +281,7 @@ fun OrdersScreen(
             searchQuery = uiState.productSearchQuery,
             selectedProduct = uiState.selectedProduct,
             quantity = uiState.itemQuantity,
+            customPricePesos = uiState.itemCustomPricePesos,
             notes = uiState.itemNotes,
             isSubmitting = uiState.isSubmittingItem,
             errorMessage = uiState.addItemError,
@@ -276,6 +289,7 @@ fun OrdersScreen(
             onSearchQueryChange = viewModel::onProductSearchQueryChange,
             onProductSelect = viewModel::onProductSelect,
             onQuantityChange = viewModel::onQuantityChange,
+            onCustomPriceChange = viewModel::onCustomPriceChange,
             onNotesChange = viewModel::onItemNotesChange,
             onDismiss = viewModel::dismissAddItemDialog,
             onConfirm = viewModel::addItemToOrder,
@@ -654,7 +668,11 @@ private fun OrderCard(
                 )
 
                 Text(
-                    text = formatDateTime(order.openedAt),
+                    text = if (DateUtils.isTodayInMexico(order.openedAt)) {
+                        DateUtils.formatOrderTime(order.openedAt)
+                    } else {
+                        DateUtils.formatOrderDateTime(order.openedAt)
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = ChocolateFondant.copy(alpha = 0.6f),
                 )
@@ -1003,6 +1021,7 @@ private fun AddProductDialog(
     searchQuery: String,
     selectedProduct: Product?,
     quantity: Int,
+    customPricePesos: String,
     notes: String,
     isSubmitting: Boolean,
     errorMessage: String?,
@@ -1010,6 +1029,7 @@ private fun AddProductDialog(
     onSearchQueryChange: (String) -> Unit,
     onProductSelect: (Product) -> Unit,
     onQuantityChange: (Int) -> Unit,
+    onCustomPriceChange: (String) -> Unit,
     onNotesChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -1022,7 +1042,7 @@ private fun AddProductDialog(
             shadowElevation = 0.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(580.dp),
+                .height(620.dp),
         ) {
             Column(
                 modifier = Modifier
@@ -1160,7 +1180,7 @@ private fun AddProductDialog(
                                     }
 
                                     Text(
-                                        text = formatPesos(product.precioCentavos),
+                                        text = if (product.precioAbierto) "Precio Libre" else formatPesos(product.precioCentavos),
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = BrandyBrown,
@@ -1175,8 +1195,26 @@ private fun AddProductDialog(
                 HorizontalDivider(color = ApricotIllusion.copy(alpha = 0.5f))
                 Spacer(Modifier.height(8.dp))
 
-                // Panel de Selección de Cantidad y Notas
+                // Panel de Selección de Cantidad, Importe y Notas
                 if (selectedProduct != null) {
+                    if (selectedProduct.precioAbierto) {
+                        OutlinedTextField(
+                            value = customPricePesos,
+                            onValueChange = onCustomPriceChange,
+                            label = { Text("Importe / Precio ($ MXN)") },
+                            placeholder = { Text("Ej. 100.00 o 150.00") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BrandyBrown,
+                                unfocusedBorderColor = ApricotIllusion,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1243,7 +1281,7 @@ private fun AddProductDialog(
                     OutlinedTextField(
                         value = notes,
                         onValueChange = onNotesChange,
-                        placeholder = { Text("Notas (ej. sin cebolla, salsa aparte)") },
+                        placeholder = { Text("Notas (ej. surtida, sin cebolla)") },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -1464,10 +1502,96 @@ private fun formatPesos(cents: Long): String {
     return format.format(pesos)
 }
 
-private fun formatDateTime(isoString: String): String {
-    return if (isoString.length >= 16) {
-        isoString.substring(0, 16).replace('T', ' ')
-    } else {
-        isoString
+@Composable
+private fun OrdersScopeSwitcher(
+    selectedTab: OrderScopeTab,
+    todayCount: Int,
+    historyCount: Int,
+    onTabSelected: (OrderScopeTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+            .border(BorderStroke(1.dp, ApricotIllusion), RoundedCornerShape(10.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        val todaySelected = selectedTab == OrderScopeTab.DEL_DIA
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .background(
+                    if (todaySelected) BrandyBrown else Color.Transparent,
+                    RoundedCornerShape(8.dp),
+                )
+                .clickable { onTabSelected(OrderScopeTab.DEL_DIA) }
+                .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = "Comandas de Hoy",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (todaySelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (todaySelected) Color.White else ChocolateFondant.copy(alpha = 0.8f),
+                )
+                Spacer(Modifier.width(6.dp))
+                Surface(
+                    shape = CircleShape,
+                    color = if (todaySelected) Color.White.copy(alpha = 0.25f) else ApricotIllusion.copy(alpha = 0.5f),
+                ) {
+                    Text(
+                        text = todayCount.toString(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (todaySelected) Color.White else BrandyBrown,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+        }
+
+        val historySelected = selectedTab == OrderScopeTab.HISTORIAL
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .background(
+                    if (historySelected) BrandyBrown else Color.Transparent,
+                    RoundedCornerShape(8.dp),
+                )
+                .clickable { onTabSelected(OrderScopeTab.HISTORIAL) }
+                .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = "Historial",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (historySelected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (historySelected) Color.White else ChocolateFondant.copy(alpha = 0.8f),
+                )
+                Spacer(Modifier.width(6.dp))
+                Surface(
+                    shape = CircleShape,
+                    color = if (historySelected) Color.White.copy(alpha = 0.25f) else ApricotIllusion.copy(alpha = 0.5f),
+                ) {
+                    Text(
+                        text = historyCount.toString(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (historySelected) Color.White else BrandyBrown,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+        }
     }
 }

@@ -7,6 +7,7 @@ data class Product(
     val precioCentavos: Long,
     val categoria: String,
     val controlaInventario: Boolean,
+    val precioAbierto: Boolean = false,
     val stockActual: Int?,
     val stockMinimo: Int?,
     val activo: Boolean,

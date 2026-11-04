@@ -167,6 +167,7 @@ class InventoryViewModel @Inject constructor(
                 formPrecioPesos = "",
                 formCategoria = "",
                 formControlaInventario = false,
+                formPrecioAbierto = false,
                 formStockMinimo = "0",
                 formActivo = true,
                 formErrorMessage = null,
@@ -184,6 +185,7 @@ class InventoryViewModel @Inject constructor(
                 formPrecioPesos = pesosStr,
                 formCategoria = product.categoria,
                 formControlaInventario = product.controlaInventario,
+                formPrecioAbierto = product.precioAbierto,
                 formStockMinimo = (product.stockMinimo ?: 0).toString(),
                 formActivo = product.activo,
                 formErrorMessage = null,
@@ -215,7 +217,17 @@ class InventoryViewModel @Inject constructor(
     }
 
     fun onFormControlaInventarioChange(value: Boolean) {
-        _uiState.update { it.copy(formControlaInventario = value) }
+        _uiState.update { it.copy(formControlaInventario = if (it.formPrecioAbierto) false else value) }
+    }
+
+    fun onFormPrecioAbiertoChange(value: Boolean) {
+        _uiState.update {
+            it.copy(
+                formPrecioAbierto = value,
+                formControlaInventario = if (value) false else it.formControlaInventario,
+                formErrorMessage = null,
+            )
+        }
     }
 
     fun onFormStockMinimoChange(value: String) {
@@ -240,13 +252,18 @@ class InventoryViewModel @Inject constructor(
             return
         }
 
-        val centavos = InventoryUiState.parsePesosToCentavos(state.formPrecioPesos)
-        if (centavos == null || centavos < 0) {
-            _uiState.update { it.copy(formErrorMessage = "Ingresa un precio válido en pesos (ej. 35.00).") }
-            return
+        val centavos = if (state.formPrecioAbierto) {
+            if (state.formPrecioPesos.isBlank()) 0L else (InventoryUiState.parsePesosToCentavos(state.formPrecioPesos) ?: 0L)
+        } else {
+            val parsed = InventoryUiState.parsePesosToCentavos(state.formPrecioPesos)
+            if (parsed == null || parsed < 0) {
+                _uiState.update { it.copy(formErrorMessage = "Ingresa un precio válido en pesos (ej. 35.00).") }
+                return
+            }
+            parsed
         }
 
-        val stockMinimo = if (state.formControlaInventario) {
+        val stockMinimo = if (state.formControlaInventario && !state.formPrecioAbierto) {
             state.formStockMinimo.toIntOrNull() ?: run {
                 _uiState.update { it.copy(formErrorMessage = "El stock mínimo debe ser un número entero.") }
                 return
@@ -261,8 +278,9 @@ class InventoryViewModel @Inject constructor(
                     nombre = nombre,
                     precioCentavos = centavos,
                     categoria = categoria,
-                    controlaInventario = state.formControlaInventario,
+                    controlaInventario = if (state.formPrecioAbierto) false else state.formControlaInventario,
                     stockMinimo = stockMinimo,
+                    precioAbierto = state.formPrecioAbierto,
                 )
             } else {
                 updateProductUseCase(
@@ -270,9 +288,10 @@ class InventoryViewModel @Inject constructor(
                     nombre = nombre,
                     precioCentavos = centavos,
                     categoria = categoria,
-                    controlaInventario = state.formControlaInventario,
+                    controlaInventario = if (state.formPrecioAbierto) false else state.formControlaInventario,
                     stockMinimo = stockMinimo,
                     activo = state.formActivo,
+                    precioAbierto = state.formPrecioAbierto,
                 )
             }
 

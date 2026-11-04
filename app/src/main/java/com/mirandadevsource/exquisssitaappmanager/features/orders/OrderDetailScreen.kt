@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mirandadevsource.exquisssitaappmanager.core.utils.DateUtils
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Order
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderDetail
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderStatus
@@ -210,7 +211,7 @@ fun OrderDetailScreen(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "Apertura: ${formatDateTime(order.openedAt)}",
+                            text = "Apertura: ${DateUtils.formatOrderDateTime(order.openedAt)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = ChocolateFondant.copy(alpha = 0.8f),
                         )
@@ -641,12 +642,4 @@ private fun formatPesos(cents: Long): String {
     val pesos = cents.toDouble() / 100.0
     val format = NumberFormat.getCurrencyInstance(Locale.forLanguageTag("es-MX"))
     return format.format(pesos)
-}
-
-private fun formatDateTime(isoString: String): String {
-    return if (isoString.length >= 16) {
-        isoString.substring(0, 16).replace('T', ' ')
-    } else {
-        isoString
-    }
 }
