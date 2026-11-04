@@ -14,3 +14,9 @@
 .cxx
 local.properties
 /docs/agents-cowork/
+/supabase/functions/.env
+/supabase/functions/.env.*
+!/supabase/functions/.env.example
+
+# Branding scratch
+/branding/la-exquisssita/work/
