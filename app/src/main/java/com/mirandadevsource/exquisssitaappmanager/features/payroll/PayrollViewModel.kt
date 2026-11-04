@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.WeeklyPayrollItem
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.EmployeeLoanRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.PayrollRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.payroll.GetWeeklyPayrollStatusUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.payroll.RegisterPayrollPaymentUseCase
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
 import java.time.LocalDate
 import javax.inject.Inject
 
@@ -21,6 +23,7 @@ class PayrollViewModel @Inject constructor(
     private val getWeeklyPayrollStatusUseCase: GetWeeklyPayrollStatusUseCase,
     private val registerPayrollPaymentUseCase: RegisterPayrollPaymentUseCase,
     private val payrollRepository: PayrollRepository,
+    private val employeeLoanRepository: EmployeeLoanRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PayrollUiState())
@@ -46,7 +49,7 @@ class PayrollViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            errorMessage = error.localizedMessage ?: "Error al cargar la nómina de la semana.",
+                            errorMessage = error.localizedMessage ?: "Error al cargar la nomina de la semana.",
                         )
                     }
                 }
@@ -73,8 +76,29 @@ class PayrollViewModel @Inject constructor(
                 paymentModalItem = item,
                 paymentDateInput = LocalDate.now().toString(),
                 paymentNotesInput = "",
+                activeLoanForPayment = null,
+                loanDeductionPesosText = "",
+                isLoadingLoanForPayment = true,
+                loanDeductionError = null,
                 errorMessage = null,
             )
+        }
+        viewModelScope.launch {
+            employeeLoanRepository.getLoansForEmployee(item.employee.id)
+                .onSuccess { loans ->
+                    val activeLoan = loans.firstOrNull { it.isPending }
+                    _uiState.update { current ->
+                        current.copy(
+                            isLoadingLoanForPayment = false,
+                            activeLoanForPayment = activeLoan,
+                            loanDeductionPesosText = "",
+                            loanDeductionError = null,
+                        )
+                    }
+                }
+                .onFailure {
+                    _uiState.update { it.copy(isLoadingLoanForPayment = false) }
+                }
         }
     }
 
@@ -86,15 +110,62 @@ class PayrollViewModel @Inject constructor(
         _uiState.update { it.copy(paymentNotesInput = notes) }
     }
 
+    fun updateLoanDeduction(amountText: String) {
+        _uiState.update { state ->
+            val activeLoan = state.activeLoanForPayment
+            var error: String? = null
+            if (amountText.isNotBlank() && activeLoan != null) {
+                try {
+                    val normalized = amountText.trim().replace("$", "").replace(",", "")
+                    val dec = BigDecimal(normalized)
+                    val cents = dec.movePointRight(2).longValueExact()
+                    val salaryCents = state.paymentModalItem?.employee?.salarioCents ?: 0L
+                    if (cents < 0L) {
+                        error = "El descuento no puede ser negativo."
+                    } else if (cents > activeLoan.saldoPendienteCentavos) {
+                        error = "El descuento no puede exceder el saldo pendiente ($${activeLoan.saldoPendientePesos})."
+                    } else if (cents > salaryCents) {
+                        error = "El descuento no puede ser mayor al sueldo semanal."
+                    }
+                } catch (_: Exception) {
+                    error = "Monto de descuento no valido."
+                }
+            }
+            state.copy(loanDeductionPesosText = amountText, loanDeductionError = error)
+        }
+    }
+
+    fun applyFullLoanDeduction() {
+        val state = _uiState.value
+        val loan = state.activeLoanForPayment ?: return
+        val salaryCents = state.paymentModalItem?.employee?.salarioCents ?: 0L
+        val maxDeductibleCents = minOf(loan.saldoPendienteCentavos, salaryCents)
+        val pesos = BigDecimal.valueOf(maxDeductibleCents, 2).toPlainString()
+        updateLoanDeduction(pesos)
+    }
+
     fun closePaymentModal() {
-        _uiState.update { it.copy(paymentModalItem = null, isRegisteringPayment = false) }
+        _uiState.update {
+            it.copy(
+                paymentModalItem = null,
+                isRegisteringPayment = false,
+                activeLoanForPayment = null,
+                loanDeductionPesosText = "",
+                loanDeductionError = null,
+            )
+        }
     }
 
     fun confirmPayment() {
         val item = _uiState.value.paymentModalItem ?: return
-        val weekStart = _uiState.value.weekStartMonday.toString()
-        val payDate = _uiState.value.paymentDateInput.trim().ifBlank { null }
-        val notes = _uiState.value.paymentNotesInput.trim().ifBlank { null }
+        val state = _uiState.value
+        if (state.loanDeductionError != null) return
+
+        val weekStart = state.weekStartMonday.toString()
+        val payDate = state.paymentDateInput.trim().ifBlank { null }
+        val notes = state.paymentNotesInput.trim().ifBlank { null }
+        val deductionCents = state.deductionCents
+        val loanId = if (deductionCents > 0L) state.activeLoanForPayment?.id else null
 
         viewModelScope.launch {
             _uiState.update { it.copy(isRegisteringPayment = true, errorMessage = null) }
@@ -103,11 +174,16 @@ class PayrollViewModel @Inject constructor(
                 periodoInicio = weekStart,
                 fechaPago = payDate,
                 notas = notes,
+                descuentoPrestamoCents = deductionCents,
+                prestamoId = loanId,
             ).onSuccess {
                 _uiState.update {
                     it.copy(
                         isRegisteringPayment = false,
                         paymentModalItem = null,
+                        activeLoanForPayment = null,
+                        loanDeductionPesosText = "",
+                        loanDeductionError = null,
                         successMessage = "Pago de ${item.employee.fullName} registrado correctamente.",
                     )
                 }
@@ -116,7 +192,7 @@ class PayrollViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isRegisteringPayment = false,
-                        errorMessage = error.localizedMessage ?: "No se pudo registrar el pago de nómina.",
+                        errorMessage = error.localizedMessage ?: "No se pudo registrar el pago de nomina.",
                     )
                 }
             }
@@ -180,7 +256,7 @@ class PayrollViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isLoadingHistoryPage = false,
-                            historyError = error.localizedMessage ?: "Error al cargar más historial.",
+                            historyError = error.localizedMessage ?: "Error al cargar mas historial.",
                         )
                     }
                 }

@@ -30,7 +30,14 @@ class RegisterPayrollPaymentUseCaseTest {
         var failure: Throwable? = null
         override suspend fun getPaymentsForPeriod(periodoInicio: String) = Result.success(emptyList<EmployeePayment>())
         override suspend fun getPaymentHistoryForEmployee(empleadoId: String) = Result.success(emptyList<EmployeePayment>())
-        override suspend fun registerWeeklyPayment(empleadoId: String, periodoInicio: String, fechaPago: String?, notas: String?): Result<EmployeePayment> {
+        override suspend fun registerWeeklyPayment(
+            empleadoId: String,
+            periodoInicio: String,
+            fechaPago: String?,
+            notas: String?,
+            descuentoPrestamoCents: Long,
+            prestamoId: String?,
+        ): Result<EmployeePayment> {
             calls++
             return failure?.let { Result.failure(it) } ?: Result.failure(UnsupportedOperationException())
         }

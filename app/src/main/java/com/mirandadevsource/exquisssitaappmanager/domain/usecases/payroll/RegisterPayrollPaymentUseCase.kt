@@ -14,9 +14,14 @@ class RegisterPayrollPaymentUseCase @Inject constructor(
         periodoInicio: String,
         fechaPago: String? = null,
         notas: String? = null,
+        descuentoPrestamoCents: Long = 0L,
+        prestamoId: String? = null,
     ): Result<EmployeePayment> {
         if (empleadoId.isBlank()) {
             return Result.failure(IllegalArgumentException("El empleado es obligatorio para registrar el pago."))
+        }
+        if (descuentoPrestamoCents < 0) {
+            return Result.failure(IllegalArgumentException("El descuento no puede ser negativo."))
         }
         val periodDate = runCatching { LocalDate.parse(periodoInicio) }
             .getOrElse { return Result.failure(IllegalArgumentException("El periodo debe ser una fecha válida (AAAA-MM-DD).", it)) }
@@ -31,6 +36,8 @@ class RegisterPayrollPaymentUseCase @Inject constructor(
             periodoInicio = periodDate.toString(),
             fechaPago = fechaPago,
             notas = notas?.trim()?.ifBlank { null },
+            descuentoPrestamoCents = descuentoPrestamoCents,
+            prestamoId = prestamoId,
         )
     }
 }

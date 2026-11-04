@@ -2,12 +2,17 @@ package com.mirandadevsource.exquisssitaappmanager.features.employees
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mirandadevsource.exquisssitaappmanager.core.utils.DateUtils
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.AuthState
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Employee
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.EmployeeLoan
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.EmployeeRepository
+import com.mirandadevsource.exquisssitaappmanager.domain.usecases.employees.CreateEmployeeLoanUseCase
+import com.mirandadevsource.exquisssitaappmanager.domain.usecases.employees.GetEmployeeLoansUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.employees.GetEmployeesUseCase
+import com.mirandadevsource.exquisssitaappmanager.domain.usecases.employees.RegisterLoanPaymentUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.employees.SaveEmployeeUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.employees.ToggleEmployeeActiveUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,6 +31,9 @@ class EmployeesViewModel @Inject constructor(
     private val toggleEmployeeActiveUseCase: ToggleEmployeeActiveUseCase,
     private val employeeRepository: EmployeeRepository,
     private val authRepository: AuthRepository,
+    private val getEmployeeLoansUseCase: GetEmployeeLoansUseCase,
+    private val createEmployeeLoanUseCase: CreateEmployeeLoanUseCase,
+    private val registerLoanPaymentUseCase: RegisterLoanPaymentUseCase,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(EmployeesUiState())
@@ -44,6 +52,14 @@ class EmployeesViewModel @Inject constructor(
             }
         }
         loadEmployees()
+        loadLoans()
+    }
+
+    fun setTab(tab: EmployeeScreenTab) {
+        _uiState.update { it.copy(selectedTab = tab) }
+        if (tab == EmployeeScreenTab.PRESTAMOS && _uiState.value.loans.isEmpty()) {
+            loadLoans()
+        }
     }
 
     fun loadEmployees(isRefresh: Boolean = false) {
@@ -67,7 +83,7 @@ class EmployeesViewModel @Inject constructor(
                             nextOffset = dataPage.nextOffset,
                             pageFetchedAt = dataPage.fetchedAt,
                             errorMessage = if (conflictedCount > 0) {
-                                "$conflictedCount cambio(s) de empleado tienen conflicto de versión. No los vuelvas a guardar hasta revisar el dato vigente en Supabase."
+                                "$conflictedCount cambio(s) de empleado tienen conflicto de version. No los vuelvas a guardar hasta revisar el dato vigente en Supabase."
                             } else null,
                         )
                     }
@@ -81,6 +97,9 @@ class EmployeesViewModel @Inject constructor(
                         )
                     }
                 }
+            if (isRefresh) {
+                loadLoans()
+            }
         }
     }
 
@@ -111,7 +130,7 @@ class EmployeesViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isLoadingPage = false,
-                            errorMessage = error.localizedMessage ?: "Error al cargar más empleados.",
+                            errorMessage = error.localizedMessage ?: "Error al cargar mas empleados.",
                         )
                     }
                 }
@@ -185,7 +204,7 @@ class EmployeesViewModel @Inject constructor(
                 }
                 decimal.movePointRight(2).longValueExact()
             } catch (_: Exception) {
-                _uiState.update { it.copy(errorMessage = "Ingresa un salario válido en pesos (ej. 1200.00).") }
+                _uiState.update { it.copy(errorMessage = "Ingresa un salario valido en pesos (ej. 1200.00).") }
                 return
             }
         }
@@ -234,7 +253,7 @@ class EmployeesViewModel @Inject constructor(
                             successMessage = if (newStatus) {
                                 "Empleado reactivado correctamente."
                             } else {
-                                "Empleado desactivado (baja lógica)."
+                                "Empleado desactivado (baja logica)."
                             },
                         )
                     }
@@ -247,6 +266,186 @@ class EmployeesViewModel @Inject constructor(
                         )
                     }
                 }
+        }
+    }
+
+    // =========================================================================
+    // MODULO DE PRESTAMOS Y ADELANTOS
+    // =========================================================================
+
+    fun setLoanFilter(filter: LoanFilter) {
+        _uiState.update { it.copy(loanFilter = filter) }
+    }
+
+    fun loadLoans() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingLoans = true) }
+            getEmployeeLoansUseCase()
+                .onSuccess { loansList ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingLoans = false,
+                            loans = loansList,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isLoadingLoans = false,
+                            errorMessage = error.localizedMessage ?: "Error al cargar la lista de prestamos.",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun openCreateLoanDialog(preselectedEmployeeId: String? = null) {
+        val defaultId = preselectedEmployeeId
+            ?: _uiState.value.employees.firstOrNull { it.activo }?.id
+            ?: ""
+        val today = DateUtils.nowMexicoCity().toLocalDate().toString()
+        _uiState.update {
+            it.copy(
+                createLoanForm = CreateLoanFormData(
+                    empleadoId = defaultId,
+                    montoPesosText = "",
+                    fechaText = today,
+                    notasText = "",
+                ),
+                loanFormError = null,
+            )
+        }
+    }
+
+    fun updateCreateLoanForm(transform: (CreateLoanFormData) -> CreateLoanFormData) {
+        _uiState.update { state ->
+            val current = state.createLoanForm ?: CreateLoanFormData()
+            state.copy(createLoanForm = transform(current), loanFormError = null)
+        }
+    }
+
+    fun closeCreateLoanDialog() {
+        _uiState.update { it.copy(createLoanForm = null, loanFormError = null, isSavingLoan = false) }
+    }
+
+    fun submitCreateLoan() {
+        val form = _uiState.value.createLoanForm ?: return
+        if (form.empleadoId.isBlank()) {
+            _uiState.update { it.copy(loanFormError = "Selecciona un empleado para el prestamo.") }
+            return
+        }
+
+        val cents = try {
+            val normalized = form.montoPesosText.trim().replace("$", "").replace(",", "")
+            val decimal = BigDecimal(normalized)
+            if (decimal <= BigDecimal.ZERO) {
+                _uiState.update { it.copy(loanFormError = "El monto debe ser mayor a cero.") }
+                return
+            }
+            decimal.movePointRight(2).longValueExact()
+        } catch (_: Exception) {
+            _uiState.update { it.copy(loanFormError = "Ingresa un monto valido (ej. 500.00).") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSavingLoan = true, loanFormError = null) }
+            createEmployeeLoanUseCase(
+                empleadoId = form.empleadoId,
+                montoCentavos = cents,
+                fecha = form.fechaText.trim().ifBlank { null },
+                notas = form.notasText.trim().ifBlank { null },
+            ).onSuccess { loan ->
+                _uiState.update {
+                    it.copy(
+                        isSavingLoan = false,
+                        createLoanForm = null,
+                        successMessage = "Prestamo de ${loan.empleadoNombre ?: "empleado"} registrado correctamente.",
+                    )
+                }
+                loadLoans()
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isSavingLoan = false,
+                        loanFormError = error.localizedMessage ?: "Error al registrar el prestamo.",
+                    )
+                }
+            }
+        }
+    }
+
+    fun openAbonoDialog(loan: EmployeeLoan) {
+        _uiState.update {
+            it.copy(
+                abonoForm = AbonoLoanFormData(
+                    loan = loan,
+                    montoPesosText = "",
+                    notasText = "",
+                ),
+                abonoFormError = null,
+            )
+        }
+    }
+
+    fun updateAbonoForm(transform: (AbonoLoanFormData) -> AbonoLoanFormData) {
+        _uiState.update { state ->
+            val current = state.abonoForm ?: AbonoLoanFormData()
+            state.copy(abonoForm = transform(current), abonoFormError = null)
+        }
+    }
+
+    fun closeAbonoDialog() {
+        _uiState.update { it.copy(abonoForm = null, abonoFormError = null, isSavingAbono = false) }
+    }
+
+    fun submitAbono() {
+        val form = _uiState.value.abonoForm ?: return
+        val loan = form.loan ?: return
+
+        val cents = try {
+            val normalized = form.montoPesosText.trim().replace("$", "").replace(",", "")
+            val decimal = BigDecimal(normalized)
+            if (decimal <= BigDecimal.ZERO) {
+                _uiState.update { it.copy(abonoFormError = "El monto del abono debe ser mayor a cero.") }
+                return
+            }
+            val parsedCents = decimal.movePointRight(2).longValueExact()
+            if (parsedCents > loan.saldoPendienteCentavos) {
+                _uiState.update { it.copy(abonoFormError = "El abono no puede exceder el saldo pendiente ($${loan.saldoPendientePesos}).") }
+                return
+            }
+            parsedCents
+        } catch (_: Exception) {
+            _uiState.update { it.copy(abonoFormError = "Ingresa un monto valido (ej. 200.00).") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSavingAbono = true, abonoFormError = null) }
+            registerLoanPaymentUseCase(
+                prestamoId = loan.id,
+                montoCentavos = cents,
+                tipo = "pago_directo",
+                notas = form.notasText.trim().ifBlank { null },
+            ).onSuccess { updatedLoan ->
+                _uiState.update {
+                    it.copy(
+                        isSavingAbono = false,
+                        abonoForm = null,
+                        successMessage = "Abono registrado con exito. Saldo restante: $${updatedLoan.saldoPendientePesos}",
+                    )
+                }
+                loadLoans()
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        isSavingAbono = false,
+                        abonoFormError = error.localizedMessage ?: "Error al registrar el abono.",
+                    )
+                }
+            }
         }
     }
 

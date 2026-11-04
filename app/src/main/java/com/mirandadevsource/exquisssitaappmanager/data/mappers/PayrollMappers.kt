@@ -18,6 +18,8 @@ fun EmployeePaymentDto.toDomain(): EmployeePayment = EmployeePayment(
     registradoPor = registradoPor,
     createdAt = createdAt.orEmpty(),
     syncVersion = syncVersion,
+    descuentoPrestamoCents = descuentoPrestamo,
+    prestamoId = prestamoId,
 )
 
 fun PayrollRecordEntity.toDomain(): EmployeePayment = EmployeePayment(

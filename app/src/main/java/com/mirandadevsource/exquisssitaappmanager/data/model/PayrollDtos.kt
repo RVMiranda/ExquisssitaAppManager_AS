@@ -15,6 +15,8 @@ data class EmployeePaymentDto(
     @SerialName("registrado_por") val registradoPor: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("sync_version") val syncVersion: Long = 1L,
+    @SerialName("descuento_prestamo") val descuentoPrestamo: Long = 0L,
+    @SerialName("prestamo_id") val prestamoId: String? = null,
 )
 
 @Serializable
@@ -23,4 +25,6 @@ data class RegisterPayrollPaymentRpcParams(
     @SerialName("p_periodo_inicio") val periodoInicio: String,
     @SerialName("p_fecha_pago") val fechaPago: String? = null,
     @SerialName("p_notas") val notas: String? = null,
+    @SerialName("p_descuento_prestamo") val descuentoPrestamo: Long = 0L,
+    @SerialName("p_prestamo_id") val prestamoId: String? = null,
 )

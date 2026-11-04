@@ -2,6 +2,8 @@ package com.mirandadevsource.exquisssitaappmanager.features.employees
 
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.DataPage
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Employee
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.EmployeeLoan
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.LoanStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.UserRole
 import org.junit.Assert.assertEquals
@@ -162,5 +164,66 @@ class EmployeesUiTest {
         assertTrue(page.hasMore)
         assertEquals("employees", page.scope)
         assertNotNull(page.fetchedAt)
+    }
+
+    @Test
+    fun `EmployeeScreenTab and LoanFilter filter loans by status properly`() {
+        val loans = listOf(
+            EmployeeLoan(
+                id = "loan-1",
+                empleadoId = "emp-1",
+                empleadoNombre = "Carlos Ramírez",
+                montoCentavos = 100000L,
+                saldoPendienteCentavos = 100000L,
+                fechaPrestamo = "2026-11-01",
+                notas = "Adelanto",
+                estado = LoanStatus.PENDIENTE,
+                registradoPor = "admin",
+                createdAt = "2026-11-01T10:00:00Z",
+                updatedAt = "2026-11-01T10:00:00Z",
+            ),
+            EmployeeLoan(
+                id = "loan-2",
+                empleadoId = "emp-2",
+                empleadoNombre = "Ana López",
+                montoCentavos = 200000L,
+                saldoPendienteCentavos = 120000L,
+                fechaPrestamo = "2026-11-01",
+                notas = "Prestamo diferido",
+                estado = LoanStatus.PAGO_PARCIAL,
+                registradoPor = "admin",
+                createdAt = "2026-11-01T10:00:00Z",
+                updatedAt = "2026-11-01T10:00:00Z",
+            ),
+            EmployeeLoan(
+                id = "loan-3",
+                empleadoId = "emp-3",
+                empleadoNombre = "Sofía Pérez",
+                montoCentavos = 50000L,
+                saldoPendienteCentavos = 0L,
+                fechaPrestamo = "2026-10-15",
+                notas = null,
+                estado = LoanStatus.LIQUIDADO,
+                registradoPor = "admin",
+                createdAt = "2026-10-15T10:00:00Z",
+                updatedAt = "2026-10-22T10:00:00Z",
+            ),
+        )
+
+        val state = EmployeesUiState(loans = loans)
+
+        // TODOS
+        assertEquals(3, state.filteredLoans.size)
+
+        // PENDIENTES (includes PENDIENTE and PAGO_PARCIAL)
+        val pendingState = state.copy(loanFilter = LoanFilter.PENDIENTES)
+        assertEquals(listOf("loan-1", "loan-2"), pendingState.filteredLoans.map { it.id })
+        assertEquals(2, state.pendingLoansCount)
+        assertEquals(220000L, state.totalPendingLoansCents)
+        assertEquals(350000L, state.totalPrestadoCents)
+
+        // LIQUIDADO
+        val liquidState = state.copy(loanFilter = LoanFilter.LIQUIDADOS)
+        assertEquals(listOf("loan-3"), liquidState.filteredLoans.map { it.id })
     }
 }

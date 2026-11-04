@@ -18,5 +18,7 @@ interface PayrollRepository {
         periodoInicio: String,
         fechaPago: String? = null,
         notas: String? = null,
+        descuentoPrestamoCents: Long = 0L,
+        prestamoId: String? = null,
     ): Result<EmployeePayment>
 }

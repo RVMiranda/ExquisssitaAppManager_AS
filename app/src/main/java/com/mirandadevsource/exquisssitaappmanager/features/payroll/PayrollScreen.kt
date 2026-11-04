@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Button
@@ -40,6 +41,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.EmployeeLoan
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.EmployeePayment
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PaymentSyncStatus
 import androidx.compose.material3.Icon
@@ -70,6 +74,7 @@ import com.mirandadevsource.exquisssitaappmanager.ui.theme.VanillaCustard
 import java.text.NumberFormat
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PayrollScreen(
     viewModel: PayrollViewModel,
@@ -81,24 +86,48 @@ fun PayrollScreen(
         modifier = modifier.fillMaxSize(),
         color = VanillaCustard,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+        PullToRefreshBox(
+            isRefreshing = state.isLoading,
+            onRefresh = { viewModel.loadPayroll() },
+            modifier = Modifier.fillMaxSize(),
         ) {
-            // Título de Pantalla
-            Text(
-                text = "Nómina Semanal",
-                style = MaterialTheme.typography.headlineSmall,
-                color = BrandyBrown,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "Control de pagos semanales por cuota fija (periodo lunes a domingo)",
-                style = MaterialTheme.typography.bodySmall,
-                color = ChocolateFondant.copy(alpha = 0.7f),
-                modifier = Modifier.padding(top = 2.dp, bottom = 12.dp),
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+            ) {
+                // Título de Pantalla con Botón de Refrescar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Nómina Semanal",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = BrandyBrown,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            text = "Control de pagos semanales por cuota fija (periodo lunes a domingo)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ChocolateFondant.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = { viewModel.loadPayroll() },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Refresh,
+                            contentDescription = "Actualizar nómina",
+                            tint = BrandyBrown,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
 
             // Feedback Banners
             state.errorMessage?.let { msg ->
@@ -191,8 +220,9 @@ fun PayrollScreen(
                 }
             }
         }
+    }
 
-        // Modal de Registro de Pago
+    // Modal de Registro de Pago
         state.paymentModalItem?.let { modalItem ->
             RegisterPaymentDialog(
                 item = modalItem,
@@ -200,8 +230,15 @@ fun PayrollScreen(
                 fechaPago = state.paymentDateInput,
                 notas = state.paymentNotesInput,
                 isRegistering = state.isRegisteringPayment,
+                activeLoan = state.activeLoanForPayment,
+                loanDeductionText = state.loanDeductionPesosText,
+                loanDeductionError = state.loanDeductionError,
+                isLoadingLoan = state.isLoadingLoanForPayment,
+                netPayableCents = state.netPayableCents,
                 onDateChange = { viewModel.updatePaymentDate(it) },
                 onNotesChange = { viewModel.updatePaymentNotes(it) },
+                onDeductionChange = { viewModel.updateLoanDeduction(it) },
+                onApplyFullDeduction = { viewModel.applyFullLoanDeduction() },
                 onConfirm = { viewModel.confirmPayment() },
                 onDismiss = { viewModel.closePaymentModal() },
             )
@@ -618,8 +655,15 @@ private fun RegisterPaymentDialog(
     fechaPago: String,
     notas: String,
     isRegistering: Boolean,
+    activeLoan: EmployeeLoan?,
+    loanDeductionText: String,
+    loanDeductionError: String?,
+    isLoadingLoan: Boolean,
+    netPayableCents: Long,
     onDateChange: (String) -> Unit,
     onNotesChange: (String) -> Unit,
+    onDeductionChange: (String) -> Unit,
+    onApplyFullDeduction: () -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -661,7 +705,7 @@ private fun RegisterPaymentDialog(
                     }
                 }
 
-                // Resumen del Empleado y Monto
+                // Resumen del Empleado y Monto Bruto
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = ApricotIllusion.copy(alpha = 0.25f),
@@ -679,7 +723,7 @@ private fun RegisterPaymentDialog(
                             color = ChocolateFondant,
                         )
                         Text(
-                            text = "Monto semanal: ${formatPesos(item.employee.salarioCents)}",
+                            text = "Sueldo base semanal: ${formatPesos(item.employee.salarioCents)}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
                             color = BrandyBrown,
@@ -689,6 +733,121 @@ private fun RegisterPaymentDialog(
                             style = MaterialTheme.typography.bodySmall,
                             color = ChocolateFondant.copy(alpha = 0.7f),
                         )
+                    }
+                }
+
+                // Seccion de Prestamos y Adelantos Pendientes
+                if (isLoadingLoan) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            color = BrandyBrown,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            text = "Verificando prestamos activos...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ChocolateFondant.copy(alpha = 0.7f),
+                        )
+                    }
+                } else if (activeLoan != null) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFFFF8E1),
+                        border = BorderStroke(1.dp, Color(0xFFFFD54F)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "Prestamo Activo",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BrandyBrown,
+                                    )
+                                    Text(
+                                        text = "Saldo pendiente: $${activeLoan.saldoPendientePesos}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ChocolateFondant,
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = onApplyFullDeduction,
+                                    enabled = !isRegistering,
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, BrandyBrown),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                ) {
+                                    Text("Cobrar todo", style = MaterialTheme.typography.labelSmall, color = BrandyBrown)
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = loanDeductionText,
+                                onValueChange = onDeductionChange,
+                                label = { Text("Descontar en esta nomina ($)") },
+                                placeholder = { Text("0.00 (opcional / diferir)") },
+                                singleLine = true,
+                                enabled = !isRegistering,
+                                isError = loanDeductionError != null,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = outlinedTextFieldColors(),
+                            )
+
+                            loanDeductionError?.let { err ->
+                                Text(
+                                    text = err,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+
+                            // Desglose Neto si hay descuento ingresado
+                            val deduction = try {
+                                val d = java.math.BigDecimal(loanDeductionText.trim().replace("$", "").replace(",", ""))
+                                if (d > java.math.BigDecimal.ZERO) d else java.math.BigDecimal.ZERO
+                            } catch (_: Exception) {
+                                java.math.BigDecimal.ZERO
+                            }
+                            if (deduction > java.math.BigDecimal.ZERO && loanDeductionError == null) {
+                                val remainingLoan = maxOf(java.math.BigDecimal.ZERO, activeLoan.saldoPendientePesos - deduction)
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = "Neto a entregar: ${formatPesos(netPayableCents)}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = BrandyBrown,
+                                        )
+                                        Text(
+                                            text = "Nuevo saldo del prestamo: $$remainingLoan",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = ChocolateFondant.copy(alpha = 0.8f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -734,7 +893,7 @@ private fun RegisterPaymentDialog(
 
                     Button(
                         onClick = onConfirm,
-                        enabled = !isRegistering,
+                        enabled = !isRegistering && loanDeductionError == null,
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = BrandyBrown),

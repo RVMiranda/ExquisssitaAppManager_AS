@@ -47,7 +47,14 @@ class GetWeeklyPayrollStatusUseCaseTest {
             return Result.success(payments)
         }
         override suspend fun getPaymentHistoryForEmployee(empleadoId: String) = Result.success(emptyList<EmployeePayment>())
-        override suspend fun registerWeeklyPayment(empleadoId: String, periodoInicio: String, fechaPago: String?, notas: String?) = Result.failure<EmployeePayment>(UnsupportedOperationException())
+        override suspend fun registerWeeklyPayment(
+            empleadoId: String,
+            periodoInicio: String,
+            fechaPago: String?,
+            notas: String?,
+            descuentoPrestamoCents: Long,
+            prestamoId: String?,
+        ) = Result.failure<EmployeePayment>(UnsupportedOperationException())
     }
 
     companion object {

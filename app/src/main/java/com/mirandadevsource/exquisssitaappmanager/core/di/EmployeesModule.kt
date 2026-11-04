@@ -2,9 +2,11 @@ package com.mirandadevsource.exquisssitaappmanager.core.di
 
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.EmployeeDao
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
+import com.mirandadevsource.exquisssitaappmanager.data.repository.EmployeeLoanRepositoryImpl
 import com.mirandadevsource.exquisssitaappmanager.data.repository.EmployeeRepositoryImpl
 import com.mirandadevsource.exquisssitaappmanager.data.sync.EmployeesPayrollSyncCoordinator
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.EmployeeLoanRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.EmployeeRepository
 import dagger.Module
 import dagger.Provides
@@ -30,5 +32,19 @@ object EmployeesModule {
         employeeDao,
         syncCoordinator,
         authRepository,
+    )
+
+    @Provides
+    @Singleton
+    fun provideEmployeeLoanRepository(
+        supabaseClient: SupabaseClient,
+        employeeDao: EmployeeDao,
+        authRepository: AuthRepository,
+        networkMonitor: NetworkMonitor,
+    ): EmployeeLoanRepository = EmployeeLoanRepositoryImpl(
+        supabaseClient,
+        employeeDao,
+        authRepository,
+        networkMonitor,
     )
 }

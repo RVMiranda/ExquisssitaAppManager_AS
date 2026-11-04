@@ -141,6 +141,8 @@ class PayrollRepositoryImpl @Inject constructor(
         periodoInicio: String,
         fechaPago: String?,
         notas: String?,
+        descuentoPrestamoCents: Long,
+        prestamoId: String?,
     ): Result<EmployeePayment> = paymentMutex.withLock {
         try {
             require(empleadoId.isNotBlank()) { "El empleado es obligatorio para registrar el pago." }
@@ -160,7 +162,7 @@ class PayrollRepositoryImpl @Inject constructor(
                     if (existingIntent.actorUserId != actor) throw SecurityException("Existe un pago pendiente creado por otra cuenta; no se puede adoptar ni reenviar desde esta sesión.")
                     return@withLock Result.success(existingIntent.toDomain(employee))
                 }
-                registerRemotePayment(employee, periodoInicio, fechaPago, notas)
+                registerRemotePayment(employee, periodoInicio, fechaPago, notas, descuentoPrestamoCents, prestamoId)
             } else {
                 queuePaymentIntent(employee, periodoInicio, fechaPago, notas)
             }
@@ -176,6 +178,8 @@ class PayrollRepositoryImpl @Inject constructor(
         periodoInicio: String,
         fechaPago: String?,
         notas: String?,
+        descuentoPrestamoCents: Long = 0L,
+        prestamoId: String? = null,
     ): Result<EmployeePayment> {
         val remoteEmployeeId = employee.remoteId
             ?: return queuePaymentIntent(employee, periodoInicio, fechaPago, notas)
@@ -187,6 +191,8 @@ class PayrollRepositoryImpl @Inject constructor(
                     periodoInicio = periodoInicio,
                     fechaPago = fechaPago,
                     notas = notas?.trim()?.ifBlank { null },
+                    descuentoPrestamo = descuentoPrestamoCents,
+                    prestamoId = prestamoId,
                 ),
             ).decodeAs<EmployeePaymentDto>()
             val actor = currentActor() ?: throw SecurityException("La sesión expiró antes de guardar la nómina.")

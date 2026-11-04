@@ -14,7 +14,11 @@ data class EmployeePayment(
     val createdAt: String,
     val syncVersion: Long = 1L,
     val syncStatus: PaymentSyncStatus = PaymentSyncStatus.CONFIRMED,
-)
+    val descuentoPrestamoCents: Long = 0L,
+    val prestamoId: String? = null,
+) {
+    val montoNetoCents: Long get() = maxOf(0L, montoCents - descuentoPrestamoCents)
+}
 
 enum class PaymentSyncStatus {
     CONFIRMED,
