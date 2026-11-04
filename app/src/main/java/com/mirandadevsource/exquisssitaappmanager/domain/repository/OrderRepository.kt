@@ -24,5 +24,7 @@ interface OrderRepository {
     suspend fun updateItemQuantity(detailId: String, quantity: Int): Result<String>
     suspend fun cancelItem(detailId: String): Result<String>
     suspend fun cancelOrder(orderId: String): Result<String>
-    suspend fun syncPendingCommands(): Result<Unit>
+    suspend fun syncPendingCommands(): Result<Unit> = syncPendingCommands(force = false)
+    suspend fun syncPendingCommands(force: Boolean): Result<Unit> = Result.success(Unit)
+    suspend fun cleanBlockedCommands(): Result<Int> = Result.success(0)
 }

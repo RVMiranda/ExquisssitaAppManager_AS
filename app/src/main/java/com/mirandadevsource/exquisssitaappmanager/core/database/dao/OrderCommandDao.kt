@@ -19,6 +19,18 @@ interface OrderCommandDao {
     @Query("SELECT * FROM order_command_outbox WHERE idempotencyKey = :key LIMIT 1")
     suspend fun getByKey(key: String): OrderCommandEntity?
 
+    /** Commands earlier in the same aggregate that have not reached a terminal success. */
+    @Query("""SELECT * FROM order_command_outbox
+        WHERE actorUserId = :actorId AND aggregateId = :aggregateId AND status != 'SYNCED'
+          AND (createdAtMillis < :createdAtMillis OR (createdAtMillis = :createdAtMillis AND idempotencyKey < :key))
+        ORDER BY createdAtMillis, idempotencyKey""")
+    suspend fun getEarlierUnresolvedForAggregate(
+        actorId: String,
+        aggregateId: String,
+        createdAtMillis: Long,
+        key: String,
+    ): List<OrderCommandEntity>
+
     @Query("SELECT * FROM order_command_outbox WHERE actorUserId = :actorId AND entity = :entity AND aggregateId = :aggregateId AND status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH') ORDER BY createdAtMillis DESC LIMIT 1")
     suspend fun getPendingForEntity(actorId: String, entity: String, aggregateId: String): OrderCommandEntity?
 
@@ -48,4 +60,22 @@ interface OrderCommandDao {
 
     @Query("SELECT COUNT(*) FROM order_command_outbox WHERE status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH')")
     fun observePendingCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM order_command_outbox WHERE actorUserId = :actorId AND status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH')")
+    fun observePendingCountForActor(actorId: String): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM order_command_outbox WHERE actorUserId = :actorId AND status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH')")
+    suspend fun getPendingCountForActor(actorId: String): Int
+
+    @Query("UPDATE order_command_outbox SET nextAttemptAtMillis = NULL, status = 'PENDING' WHERE actorUserId = :actorId AND status = 'PROCESSING'")
+    suspend fun resetInterruptedProcessing(actorId: String): Int
+
+    @Query("UPDATE order_command_outbox SET nextAttemptAtMillis = NULL WHERE actorUserId = :actorId AND status IN ('PENDING','CONFIRMED_AWAITING_REFRESH')")
+    suspend fun clearBackoffForActor(actorId: String): Int
+
+    @Query("UPDATE order_command_outbox SET status = 'REJECTED', updatedAtMillis = :now WHERE actorUserId = :actorId AND status IN ('PENDING','PROCESSING') AND lastErrorCode LIKE 'BLOCKED_BY_REJECTED_COMMAND%'")
+    suspend fun markBlockedCommandsAsRejected(actorId: String, now: Long = System.currentTimeMillis()): Int
+
+    @Query("DELETE FROM order_command_outbox WHERE actorUserId = :actorId AND (status = 'REJECTED' OR lastErrorCode LIKE 'BLOCKED_BY_REJECTED_COMMAND%')")
+    suspend fun deleteBlockedOrRejectedCommands(actorId: String): Int
 }

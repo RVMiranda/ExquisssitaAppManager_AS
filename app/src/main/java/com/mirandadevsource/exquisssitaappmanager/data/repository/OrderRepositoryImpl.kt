@@ -109,8 +109,7 @@ class OrderRepositoryImpl @Inject constructor(
                     // The current Room primary key is the remote id, not (id, actor).
                     // Never overwrite another actor's row; that account can still use the
                     // authoritative response for this request, but it won't be cached here.
-                    if (existing == null || (existing.actorUserId == actor &&
-                            existing.syncState == OrderEntity.SYNCED &&
+                    if (existing == null || (existing.syncState == OrderEntity.SYNCED &&
                             commandDao.countPendingForEntity(actor, dto.id) == 0)
                     ) {
                         orderDao.upsert(dto.toEntity(actor))
@@ -159,7 +158,9 @@ class OrderRepositoryImpl @Inject constructor(
         if (request.serviceType == ServiceType.TABLE && request.tableId == null) return Result.failure(IllegalArgumentException("Una orden de mesa requiere mesa."))
         if (request.tableId != null) {
             val table = tableDao.getById(request.tableId) ?: return Result.failure(IllegalArgumentException("Mesa no disponible en caché."))
-            if (table.syncState == TableEntity.PENDING && table.actorUserId != actor) return Result.failure(IllegalStateException("La mesa todavía no está sincronizada con Supabase."))
+            if (table.syncState == TableEntity.PENDING || commandDao.countPendingForEntity(actor, request.tableId) > 0) {
+                return Result.failure(IllegalStateException("La mesa tiene cambios pendientes; sincronízala antes de abrir una orden."))
+            }
         }
         val id = UUID.randomUUID().toString(); val now = Instant.now().toString()
         val payload = buildJsonObject {
@@ -167,7 +168,17 @@ class OrderRepositoryImpl @Inject constructor(
             put("estado", OrderStatus.OPEN.databaseValue); put("fecha_apertura", now); put("notas", request.notes?.trim()?.ifBlank { null })
         }.toString()
         val order = OrderEntity(id, request.tableId, request.customerId, request.serviceType.databaseValue, OrderStatus.OPEN.databaseValue, now, null, request.notes, now, now, 0, actor, OrderEntity.PENDING)
-        return enqueueAndSave(actor, id, ORDERS, id, "INSERT", payload, 0) { orderDao.upsert(order) }
+        return enqueueAndSave(actor, id, ORDERS, id, "INSERT", payload, 0) {
+            request.tableId?.let { tableId ->
+                val latestTable = tableDao.getById(tableId)
+                if (latestTable == null || latestTable.syncState == TableEntity.PENDING ||
+                    commandDao.countPendingForEntity(actor, tableId) > 0
+                ) {
+                    throw IllegalStateException("La mesa cambió y tiene sincronización pendiente; no se abrió la orden.")
+                }
+            }
+            orderDao.upsert(order)
+        }
     }
 
     override suspend fun addItem(request: AddOrderItemRequest): Result<String> {
@@ -175,10 +186,16 @@ class OrderRepositoryImpl @Inject constructor(
         if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
         if (request.quantity <= 0 || request.unitPriceCents < 0) return Result.failure(IllegalArgumentException("Cantidad o precio inválido."))
         val order = orderDao.getById(request.orderId) ?: return Result.failure(NoSuchElementException("Orden no disponible en caché."))
-        if (order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local."))
+        if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
         if (order.estado != OrderStatus.OPEN.databaseValue) return Result.failure(IllegalStateException("La orden no está abierta."))
         val product = productDao.getById(request.productId) ?: return Result.failure(NoSuchElementException("Producto no disponible en caché."))
-        if (!product.activo || product.precioCentavos != request.unitPriceCents) return Result.failure(IllegalStateException("El producto cambió o está desactivado; sincroniza el catálogo."))
+        if (!product.activo) return Result.failure(IllegalStateException("El producto está desactivado; sincroniza el catálogo."))
+        if (!product.precioAbierto && product.precioCentavos != request.unitPriceCents) {
+            return Result.failure(IllegalStateException("El producto cambió o su precio no coincide; sincroniza el catálogo."))
+        }
+        if (product.precioAbierto && request.unitPriceCents <= 0) {
+            return Result.failure(IllegalArgumentException("El importe para un producto de precio abierto debe ser mayor a cero."))
+        }
         val id = UUID.randomUUID().toString(); val now = Instant.now().toString()
         val payload = buildJsonObject {
             put("orden_id", request.orderId); put("producto_id", request.productId); put("cantidad", request.quantity)
@@ -194,7 +211,8 @@ class OrderRepositoryImpl @Inject constructor(
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
         if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
         val line = detailDao.getById(detailId) ?: return Result.failure(NoSuchElementException("Partida no encontrada."))
-        if (orderDao.getById(line.ordenId)?.actorUserId != actor) return Result.failure(IllegalStateException("La partida no pertenece a la sesión local."))
+        val parentOrder = orderDao.getById(line.ordenId)
+        if (parentOrder != null && parentOrder.syncState != OrderEntity.SYNCED && parentOrder.actorUserId != actor) return Result.failure(IllegalStateException("La partida pertenece a otra sesión local no sincronizada."))
         if (commandDao.countPendingForEntity(actor, detailId) > 0) return Result.failure(IllegalStateException("La partida tiene un cambio pendiente de sincronización."))
         if (line.estadoPago != PaymentLineStatus.PENDING.databaseValue || transactionDao.countAllocationsForDetail(detailId) > 0) return Result.failure(IllegalStateException("No se puede cambiar una partida con pagos."))
         val changed = line.copy(cantidad = quantity, syncState = OrderDetailEntity.PENDING)
@@ -205,7 +223,8 @@ class OrderRepositoryImpl @Inject constructor(
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
         if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
         val line = detailDao.getById(detailId) ?: return Result.failure(NoSuchElementException("Partida no encontrada."))
-        if (orderDao.getById(line.ordenId)?.actorUserId != actor) return Result.failure(IllegalStateException("La partida no pertenece a la sesión local."))
+        val parentOrder = orderDao.getById(line.ordenId)
+        if (parentOrder != null && parentOrder.syncState != OrderEntity.SYNCED && parentOrder.actorUserId != actor) return Result.failure(IllegalStateException("La partida pertenece a otra sesión local no sincronizada."))
         if (commandDao.countPendingForEntity(actor, detailId) > 0) return Result.failure(IllegalStateException("La partida tiene un cambio pendiente de sincronización."))
         if (line.estadoPago != PaymentLineStatus.PENDING.databaseValue || transactionDao.countAllocationsForDetail(detailId) > 0) return Result.failure(IllegalStateException("Una partida con pagos no puede cancelarse sin regla de reembolso."))
         val key = UUID.randomUUID().toString()
@@ -218,7 +237,7 @@ class OrderRepositoryImpl @Inject constructor(
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
         if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
         val order = orderDao.getById(orderId) ?: return Result.failure(NoSuchElementException("Orden no encontrada."))
-        if (order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local."))
+        if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
         if (commandDao.countPendingForEntity(actor, orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un cambio pendiente de sincronización."))
         if (order.estado != OrderStatus.OPEN.databaseValue || transactionDao.getForOrder(orderId).isNotEmpty()) return Result.failure(IllegalStateException("Una orden con pagos requiere definir el reembolso antes de cancelarla."))
         val closedAt = Instant.now().toString(); val changed = order.copy(estado = OrderStatus.CANCELLED.databaseValue, fechaCierre = closedAt, syncState = OrderEntity.PENDING)
@@ -226,10 +245,24 @@ class OrderRepositoryImpl @Inject constructor(
         return enqueueAndSave(actor, orderId, ORDERS, orderId, "UPDATE", payload, order.syncVersion) { orderDao.upsert(changed) }
     }
 
-    override suspend fun syncPendingCommands(): Result<Unit> {
-        val result = syncActorCommands()
+    override suspend fun syncPendingCommands(): Result<Unit> = syncPendingCommands(force = false)
+
+    override suspend fun syncPendingCommands(force: Boolean): Result<Unit> {
+        val result = syncActorCommands(force = force)
         if (result.isSuccess && hasRemoteSession()) return refreshOrders()
         return result
+    }
+
+    override suspend fun cleanBlockedCommands(): Result<Int> {
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa."))
+        return try {
+            val count = commandDao.deleteBlockedOrRejectedCommands(actor)
+            Result.success(count)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Result.failure(failure)
+        }
     }
 
     private suspend fun enqueueAndSave(actor: String, aggregate: String, entity: String, entityId: String, op: String, payload: String, version: Long, key: String = UUID.randomUUID().toString(), save: suspend () -> Unit): Result<String> {

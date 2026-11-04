@@ -98,11 +98,12 @@ class InventoryRepositoryImpl @Inject constructor(
         categoria: String,
         controlaInventario: Boolean,
         stockMinimo: Int,
+        precioAbierto: Boolean,
     ): Result<Product> {
         if (nombre.isBlank()) return Result.failure(IllegalArgumentException("El nombre del producto es obligatorio."))
         if (precioCentavos < 0) return Result.failure(IllegalArgumentException("El precio no puede ser negativo."))
         if (categoria.isBlank()) return Result.failure(IllegalArgumentException("La categoría es obligatoria."))
-        if (controlaInventario && stockMinimo < 0) return Result.failure(IllegalArgumentException("El stock mínimo no puede ser negativo."))
+        if (controlaInventario && !precioAbierto && stockMinimo < 0) return Result.failure(IllegalArgumentException("El stock mínimo no puede ser negativo."))
 
         if (!networkMonitor.isOnline()) {
             return Result.failure(IllegalStateException("Crear productos requiere conexión para sincronizar con el catálogo."))
@@ -115,8 +116,9 @@ class InventoryRepositoryImpl @Inject constructor(
                 nombre = nombre.trim(),
                 precio = precioCentavos,
                 categoria = categoria.trim(),
-                controlaInventario = controlaInventario,
-                stockMinimo = if (controlaInventario) stockMinimo else 0,
+                controlaInventario = if (precioAbierto) false else controlaInventario,
+                precioAbierto = precioAbierto,
+                stockMinimo = if (controlaInventario && !precioAbierto) stockMinimo else 0,
                 activo = true,
             )
             val remote = supabase.from(PRODUCTS_TABLE).insert(request) {
@@ -141,12 +143,13 @@ class InventoryRepositoryImpl @Inject constructor(
         controlaInventario: Boolean,
         stockMinimo: Int,
         activo: Boolean,
+        precioAbierto: Boolean,
     ): Result<Product> {
         if (id.isBlank()) return Result.failure(IllegalArgumentException("El identificador del producto es obligatorio."))
         if (nombre.isBlank()) return Result.failure(IllegalArgumentException("El nombre del producto es obligatorio."))
         if (precioCentavos < 0) return Result.failure(IllegalArgumentException("El precio no puede ser negativo."))
         if (categoria.isBlank()) return Result.failure(IllegalArgumentException("La categoría es obligatoria."))
-        if (controlaInventario && stockMinimo < 0) return Result.failure(IllegalArgumentException("El stock mínimo no puede ser negativo."))
+        if (controlaInventario && !precioAbierto && stockMinimo < 0) return Result.failure(IllegalArgumentException("El stock mínimo no puede ser negativo."))
 
         if (!networkMonitor.isOnline()) {
             return Result.failure(IllegalStateException("Editar productos requiere conexión para sincronizar con el catálogo."))
@@ -157,8 +160,9 @@ class InventoryRepositoryImpl @Inject constructor(
                 nombre = nombre.trim(),
                 precio = precioCentavos,
                 categoria = categoria.trim(),
-                controlaInventario = controlaInventario,
-                stockMinimo = if (controlaInventario) stockMinimo else 0,
+                controlaInventario = if (precioAbierto) false else controlaInventario,
+                precioAbierto = precioAbierto,
+                stockMinimo = if (controlaInventario && !precioAbierto) stockMinimo else 0,
                 activo = activo,
             )
             val remote = supabase.from(PRODUCTS_TABLE).update(request) {
@@ -229,8 +233,13 @@ class InventoryRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun syncPendingCommands(): Result<Unit> {
-        if (!networkMonitor.isOnline()) return Result.success(Unit)
+    override suspend fun syncPendingCommands(): Result<Unit> = syncPendingCommands(force = false)
+
+    override suspend fun syncPendingCommands(force: Boolean): Result<Unit> {
+        if (!networkMonitor.isOnline()) {
+            return if (force) Result.failure(IllegalStateException("No hay conexión a internet para sincronizar inventario."))
+            else Result.success(Unit)
+        }
         val session = (authRepository.state.value as? AuthState.SignedIn)?.session
             ?: return Result.failure(IllegalStateException("Se requiere iniciar sesión para sincronizar inventario."))
         val currentAuthUserId = supabase.auth.currentUserOrNull()?.id
@@ -239,10 +248,16 @@ class InventoryRepositoryImpl @Inject constructor(
         }
 
         return try {
+            var failedCount = 0
+            var lastErrorMessage: String? = null
             val acquired = SyncExecutionMutex.withActorLease(session.userId, leaseDao) {
+                if (force) {
+                    commandDao.resetInterruptedProcessing(session.userId)
+                    commandDao.clearBackoffForActor(session.userId)
+                }
                 val commands = commandDao.getRecoverableCommandsForActor(
                     session.userId,
-                    System.currentTimeMillis(),
+                    if (force) Long.MAX_VALUE else System.currentTimeMillis(),
                 )
                 for (command in commands) {
                     if (command.status == InventoryCommandStatus.CONFIRMED_AWAITING_REFRESH.name) {
@@ -250,10 +265,33 @@ class InventoryRepositoryImpl @Inject constructor(
                     } else {
                         submitCommand(command)
                     }
+                    val latest = commandDao.getByKey(command.idempotencyKey)
+                    if (latest != null && latest.status != InventoryCommandStatus.SYNCED.name) {
+                        failedCount++
+                        lastErrorMessage = latest.lastErrorCode
+                    }
                 }
             }
-            if (acquired) Result.success(Unit)
-            else Result.failure(IllegalStateException("La sincronización de esta cuenta ya está activa en otra ejecución."))
+            if (!acquired) {
+                Result.failure(IllegalStateException("La sincronización de inventario ya está activa en otra ejecución."))
+            } else if (failedCount > 0) {
+                Result.failure(IllegalStateException(lastErrorMessage ?: "No se pudieron sincronizar $failedCount movimientos de inventario."))
+            } else {
+                Result.success(Unit)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Result.failure(failure)
+        }
+    }
+
+    override suspend fun cleanBlockedCommands(): Result<Int> {
+        val session = (authRepository.state.value as? AuthState.SignedIn)?.session
+            ?: return Result.failure(IllegalStateException("Se requiere una sesión activa."))
+        return try {
+            val count = commandDao.deleteRejectedCommands(session.userId)
+            Result.success(count)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -474,7 +512,7 @@ class InventoryRepositoryImpl @Inject constructor(
         const val REGISTER_MOVEMENT_RPC = "registrar_movimiento_inventario"
         const val MAX_MOVEMENT_PAGE_SIZE = 200
         val PRODUCT_COLUMNS = Columns.list(
-            "id, nombre, precio, categoria, controla_inventario, stock_actual, stock_minimo, activo, created_at, updated_at, sync_version",
+            "id, nombre, precio, categoria, controla_inventario, precio_abierto, stock_actual, stock_minimo, activo, created_at, updated_at, sync_version",
         )
         val MOVEMENT_COLUMNS = Columns.list(
             "id, producto_id, cantidad, tipo, referencia_id, notas, creado_por, created_at, idempotency_key, sync_version",

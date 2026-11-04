@@ -20,6 +20,7 @@ interface InventoryRepository {
         categoria: String,
         controlaInventario: Boolean,
         stockMinimo: Int,
+        precioAbierto: Boolean = false,
     ): Result<Product>
 
     suspend fun updateProduct(
@@ -30,6 +31,7 @@ interface InventoryRepository {
         controlaInventario: Boolean,
         stockMinimo: Int,
         activo: Boolean,
+        precioAbierto: Boolean = false,
     ): Result<Product>
 
     suspend fun getMovements(
@@ -40,7 +42,11 @@ interface InventoryRepository {
 
     suspend fun registerMovement(request: RegisterInventoryMovement): Result<InventoryCommand>
 
-    suspend fun syncPendingCommands(): Result<Unit>
+    suspend fun syncPendingCommands(): Result<Unit> = syncPendingCommands(force = false)
+
+    suspend fun syncPendingCommands(force: Boolean): Result<Unit> = Result.success(Unit)
+
+    suspend fun cleanBlockedCommands(): Result<Int> = Result.success(0)
 
     fun observeInventoryCommands(): Flow<List<InventoryCommand>>
 

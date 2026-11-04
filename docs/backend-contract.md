@@ -385,6 +385,7 @@ Para salvaguardar la consistencia contable y evitar condiciones de carrera, las 
 
 | Función remota | Argumentos | Uso |
 | --- | --- | --- |
+| `consultar_cliente_qr` | `p_qr_token text` | Consulta perfil de cliente (nombre, teléfono, visitas, puntos) por token QR para staff sin exponer la columna protegida `qr_token_hash`. Solo `admin` y `gerente`. |
 | `registrar_visita_qr` | `p_qr_token text` | Valida el token QR y acredita visita/puntos a cliente registrado. |
 | `registrar_visita_cliente` | `p_cliente_id uuid` | RPC histórica; ejecución revocada a `PUBLIC`, `anon` y `authenticated`. No usar. |
 | `registrar_pago` | `p_orden_id uuid, p_monto bigint, p_metodo_pago text, p_idempotency_key uuid, p_asignaciones jsonb` | Pago idempotente y asignaciones de detalles. |
@@ -619,3 +620,140 @@ La auditoría remota confirmó que las 27 migraciones anteriores están sincroni
 3. `20261017205843_release03_loyalty_ledger_customer_profiles_rewards.sql` — perfil/QR cliente, ledger, visitas y canjes.
 
 La prueba `supabase/tests/release03_security_acl.test.sql` comprueba ACL esenciales. No se debe usar `db push --linked` hasta que las migraciones pasen una reconstrucción local con Docker, pruebas SQL y revisión del informe ACL antes/después.
+
+## 11. Verificación actual — recompensas y canje semestral (2026-10-25)
+
+La nota de Release 03 anterior conserva el estado histórico de 2026-10-17. En la revisión actual, `npx --yes supabase@2.120.0 migration list --linked` confirmó 34 IDs locales y 34 remotos, todos coincidentes hasta `20261024201145_customer_push_notifications.sql`. También se consultaron en remoto las columnas, RLS y privilegios de `recompensas`, `canjes_recompensas` y `puntos_movimientos`; las tres tablas tienen RLS, `anon` no tiene lectura por columna, y `authenticated` recibe solo SELECT en columnas concedidas.
+
+`manage_loyalty_reward` es ejecutable por `authenticated` (no `anon`), valida `admin` en la función y compara `p_expected_version`. `redeem_loyalty_reward` es ejecutable por `authenticated` (no `anon`), valida `admin`/`gerente`, aplica semestre calendario en `America/Mexico_City`, idempotencia y bloqueo transaccional. Ambas son `SECURITY DEFINER` con `search_path` vacío. No se modificó ni desplegó SQL durante esta comprobación.
+
+`recompensas_active_select` permite leer ofertas activas a usuarios autenticados para soportar la app de clientes; por eso no equivale a una barrera RLS exclusiva de admin/gerente. El repositorio Manager limita su catálogo a esos dos roles; los canjes se filtran por cliente en la consulta de Manager y la política staff/customer aplica el aislamiento correspondiente. El contenedor local no estaba arriba, así que la validación de esquema ejecutado localmente queda pendiente; los archivos/migraciones locales sí coinciden con el historial remoto.
+
+## 12. QR de lealtad — lectura segura y visita diaria (2026-10-31)
+
+El cliente Manager no puede leer `clientes.qr_token_hash` directamente: el permiso de columna se retiró intencionalmente para evitar exponer el secreto persistente del QR. `LoyaltyRepositoryImpl` usa las RPC `consultar_cliente_qr(p_qr_token)` y `registrar_visita_qr(p_qr_token)`; ambas calculan SHA-256 en PostgreSQL y validan el rol contra `auth_role()`. La lectura devuelve solo los campos de perfil necesarios y requiere cliente vinculado a cuenta confirmada. El registro añade la visita y movimiento de puntos en una transacción; el índice único y el bloqueo por cliente mantienen una visita por usuario y fecha CDMX.
+
+La inspección remota confirmó que ambas RPC son `SECURITY DEFINER`, tienen `search_path` vacío y `EXECUTE` concedido solo a `authenticated` (sin acceso de `anon`/`PUBLIC`). `auth_role()` remoto acepta `admin` y `gerente` con empleado activo. Este privilegio elevado es deliberado para leer el hash y escribir el ledger pese al acceso directo revocado; el cuerpo de cada función mantiene la autorización por identidad/rol. El aviso de Security Advisor sobre funciones `SECURITY DEFINER` ejecutables por authenticated es general y esperado para RPC operativas de este diseño; se debe evaluar cada función por sus guardas internas, ACL y alcance de datos.
+
+El diagnóstico del error “Sesión no válida o expirada” encontró que la consulta directa a la columna `qr_token_hash` fallaba con SQLSTATE `42501`; el sanitizador confundía ese nombre con un error de token de autenticación. La capa Android ya invoca la RPC de consulta y la ruta de visita usa la RPC de registro. La migración `20261031170000_add_consultar_cliente_qr.sql` existe localmente y su definición coincide con las funciones observadas en remoto, pero la tabla `supabase_migrations.schema_migrations` aún no registra esa versión. No cambiar el historial con `migration repair`: ejecutar `db push --linked --skip-vault` aplica la migración idempotente y registra la versión.
+
+La revisión adicional encontró que la consulta no excluía perfiles con `deleted_at` y ambos RPC aceptaban longitudes distintas al token de 64 caracteres emitido por el cliente. `20261031222442_reject_deleted_customer_qr_visits.sql` excluye cuentas eliminadas tanto al consultar como al registrar, y fija ambas entradas a 64 caracteres. El dry-run remoto muestra ambas migraciones (`20261031170000` y `20261031222442`) pendientes. Aún no se aplicaron en remoto. Antes del despliegue, ejecutar la reconstrucción/prueba local disponible y luego `npx --yes supabase@2.120.0 db push --linked --skip-vault`; verificar con `migration list --linked`, ACL de las funciones y una sesión admin/gerente activa. Nunca conceder SELECT de `qr_token_hash` ni DML directo sobre el ledger como corrección.
+
+## 13. Notificaciones push para canjes de recompensas (2026-10-31)
+
+La infraestructura de notificaciones push vía FCM (Sprint 06) soportaba eventos de visita y promociones. Al canjear una recompensa, `puntos_movimientos` insertaba un registro con `tipo = 'canje'` y `puntos_delta` negativo (`-costo_puntos`), el cual era omitido por la guarda original `puntos_delta <= 0`.
+La migración `20261031233000_notify_reward_redemption_fcm.sql` extendió la función disparadora `private_push.notify_loyalty_points()` para capturar `tipo = 'canje'`, calculando los puntos canjeados mediante `abs(puntos_delta)` y formateando el título (`¡Recompensa canjeada!`) y cuerpo (`Canjeaste X puntos por: [Recompensa]`). El evento se despacha de forma asíncrona mediante `private_push.dispatch_event` a los dispositivos FCM registrados del cliente. Sincronizado y verificado en remoto.
+
+## 14. Préstamos de empleados y deducciones en nómina semanal (2026-11-01)
+
+Para apoyar el control financiero operativo de adelantos y préstamos a personal con deducción diferida o total, se implementó el módulo de préstamos y adelantos en la migración `20261101160000_employee_loans_and_payroll_deductions.sql`:
+
+1. **Tabla `public.prestamos_empleados`**:
+   - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+   - `empleado_id UUID NOT NULL REFERENCES public.empleados(id) ON DELETE RESTRICT`
+   - `monto_centavos BIGINT NOT NULL CHECK (monto_centavos > 0)`
+   - `saldo_pendiente_centavos BIGINT NOT NULL CHECK (saldo_pendiente_centavos >= 0 AND saldo_pendiente_centavos <= monto_centavos)`
+   - `fecha_prestamo DATE NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/Mexico_City')::date`
+   - `notas TEXT`
+   - `estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'pago_parcial', 'liquidado', 'cancelado'))`
+   - `registrado_por UUID REFERENCES auth.users(id)`
+   - `created_at` y `updated_at` (con trigger para timestamp).
+
+2. **Tabla `public.abonos_prestamos_empleados`**:
+   - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+   - `prestamo_id UUID NOT NULL REFERENCES public.prestamos_empleados(id) ON DELETE CASCADE`
+   - `monto_centavos BIGINT NOT NULL CHECK (monto_centavos > 0)`
+   - `saldo_anterior_centavos BIGINT NOT NULL`
+   - `saldo_restante_centavos BIGINT NOT NULL`
+   - `fecha_abono DATE NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/Mexico_City')::date`
+   - `tipo TEXT NOT NULL DEFAULT 'pago_directo' CHECK (tipo IN ('deduccion_nomina', 'pago_directo', 'ajuste'))`
+   - `nomina_pago_id UUID REFERENCES public.historial_pagos_empleados(id) ON DELETE SET NULL`
+   - `notas TEXT`
+   - `registrado_por UUID REFERENCES auth.users(id)`
+
+3. **Ampliación en `public.historial_pagos_empleados`**:
+   - `descuento_prestamo BIGINT NOT NULL DEFAULT 0 CHECK (descuento_prestamo >= 0)`
+   - `prestamo_id UUID REFERENCES public.prestamos_empleados(id) ON DELETE SET NULL`
+
+4. **Funciones RPC Transaccionales (`SECURITY DEFINER`, search_path vacío)**:
+   - `crear_prestamo_empleado(p_empleado_id, p_monto_centavos, p_fecha, p_notas)`: Valida rol `admin` o `gerente`, bloquea empleado, inserta registro y asigna estado `pendiente`.
+   - `registrar_abono_prestamo(p_prestamo_id, p_monto_centavos, p_tipo, p_notas)`: Realiza bloqueo de fila `FOR UPDATE` sobre el préstamo, deduce el saldo, actualiza estado a `liquidado` (si saldo restante es 0) o `pago_parcial` (si saldo restante > 0), e inserta el desglose en `abonos_prestamos_empleados`.
+   - `registrar_pago_nomina(p_empleado_id, p_periodo_inicio, p_fecha_pago, p_notas, p_descuento_prestamo, p_prestamo_id)`: Versión ampliada y retrocompatible (default 0 para descuento) que procesa en una sola transacción atómica el pago de nómina, la deducción del préstamo si se solicita (`descuento <= salario` y `descuento <= saldo_pendiente_centavos`), y la inserción del abono de tipo `deduccion_nomina`.
+
+5. **Aislamiento y RLS**:
+   - RLS habilitado en `prestamos_empleados` y `abonos_prestamos_empleados`.
+   - Acceso exclusivo a usuarios `authenticated` con roles `admin` o `gerente` activos.
+   - Acceso denegado a `anon` y `PUBLIC`.
+
+## 15. Publicación Realtime completa y sincronización multi-actor (2026-11-03)
+
+Para garantizar consistencia operativa total y visibilidad multi-dispositivo en tiempo real entre múltiples cuentas (`admin` y `gerente`), se aplicó la migración `20261103124500_enable_realtime_full_tables.sql`:
+
+1. **Ampliación de Supabase Realtime a 19 tablas públicas**:
+   - La publicación `supabase_realtime` contaba originalmente con 9 tablas. Se incorporaron mediante `ALTER PUBLICATION supabase_realtime ADD TABLE` las 10 tablas restantes:
+     - `pago_detalles`
+     - `pago_detalle_stock`
+     - `recompensas`
+     - `canjes_recompensas`
+     - `puntos_movimientos`
+     - `visitas_clientes`
+     - `cortes_caja`
+     - `prestamos_empleados`
+     - `abonos_prestamos_empleados`
+     - `venta_diaria`
+   - Toda mutación remota en estas entidades se difunde de manera inmediata por WebSockets a los clientes suscritos.
+
+2. **Modelo de caché compartido para órdenes confirmadas (`SYNCED`)**:
+   - En `OrderDao` y `OrderDetailDao`, las consultas Room se actualizaron con `WHERE actorUserId = :actorId OR syncState = 'SYNCED'`.
+   - Esto permite que cualquier operador (`admin` o `gerente`) visualice y gestione órdenes que ya fueron confirmadas en el servidor, independientemente de qué usuario las haya capturado originalmente.
+   - Los borradores locales fuera de línea (`PENDING`) permanecen aislados estrictamente a la sesión local del usuario que los creó.
+
+3. **Delimitación de la cola de sincronización por actor**:
+   - `OrderCommandDao` e `InventoryCommandDao` exponen `observePendingCountForActor(actorId)`.
+   - El `DashboardViewModel` observa únicamente los comandos pendientes correspondientes a la sesión activa (`actorUserId`). Esto elimina el síntoma donde la alerta "Sincronización pendiente" permanecía visible indebidamente debido a comandos huérfanos o fallidos de sesiones previas en el mismo dispositivo.
+
+4. **Operaciones compartidas sobre órdenes sincronizadas**:
+   - `OrderRepositoryImpl` y `PaymentRepositoryImpl` permiten agregar partidas, cambiar cantidades, cancelar partidas y registrar pagos sobre cualquier orden en estado `SYNCED`, reservando la restricción de pertenencia local exclusivamente para órdenes no sincronizadas.
+
+## 16. Productos con precio abierto / importe libre (2026-11-03)
+
+Para soportar ventas de alimentos por peso o importe libre variable (ej. $100 o $150 de carne a granel) sin exigir la creación de un sinnúmero de variantes en el catálogo ni romper la integridad referencial de `detalle_orden` y `productos`, se implementó la migración `20261103170000_add_precio_abierto_to_productos.sql`:
+
+1. **Columna `precio_abierto` en `public.productos`**:
+   - `precio_abierto BOOLEAN NOT NULL DEFAULT false`
+   - Los productos con esta bandera activa aceptan que el precio unitario sea ingresado libremente por el operador al agregar la partida a la comanda.
+   - En estos productos, el precio base de catálogo es opcional/sugerido (o 0), y no se controla existencia física (`controla_inventario = false`).
+
+2. **Guarda en `sync_execute_v2`**:
+   - Para partidas con `p_entity = 'detalle_orden'` en operación `INSERT`:
+     - Si `producto.precio_abierto IS TRUE`: se verifica únicamente que `precio_unitario > 0`.
+     - Si `producto.precio_abierto IS FALSE`: se mantiene la comparación estricta de igualdad contra `catalog_price` (`price_changed`).
+   - Mantiene la inmutabilidad de precios históricos en operaciones `UPDATE`.
+
+3. **Compatibilidad en Android**:
+   - `ProductDto`, `ProductEntity` y `Product` incorporan `precioAbierto: Boolean`.
+   - `OrderRepositoryImpl.kt` (`addItem`) valida que el producto esté activo y, si `precioAbierto` es falso, compara el precio de catálogo. Si es verdadero, exige `unitPriceCents > 0`.
+   - `InventoryScreen.kt` incluye un switch para marcar productos como de "Precio abierto / Monto libre" durante el alta y edición en el catálogo.
+   - `OrdersScreen.kt` (`AddProductDialog`) habilita un campo para ingresar el importe libre en pesos al seleccionar un producto con esta bandera y muestra la etiqueta "Precio Libre" en el menú.
+
+4. **Privilegios de Columna (GRANT)**:
+   - En la migración `20261103183000_grant_precio_abierto_productos.sql` se concedió `GRANT INSERT (precio_abierto), UPDATE (precio_abierto) ON public.productos TO authenticated;`, complementando las concesiones a nivel columna existentes para permitir el alta y edición directa de productos de precio abierto sin violar la seguridad por columnas.
+
+## 17. Sincronización forzada y depuración de comandos bloqueados (2026-11-03)
+
+Para evitar falsos positivos de sincronización en el Dashboard y resolver bloqueos por retroceso exponencial o precedentes rechazados:
+
+1. **Bypass de retroceso exponencial (`force = true`)**:
+   - `OrderCommandDao` e `InventoryCommandDao` exponen `clearBackoffForActor(actorId)` y `resetInterruptedProcessing(actorId)`.
+   - Cuando el usuario presiona "Sincronizar ahora" en el Dashboard, se envía `force = true` a `syncPendingCommands(force = true)` y `syncPendingPayments(force = true)`. Esto resetea `nextAttemptAtMillis` e intenta el despacho inmediato de todos los comandos pendientes de la sesión activa, evitando que el backoff oculte reintentos pendientes.
+
+2. **Resolución de comandos bloqueados por predecesores (`FIFO Aggregate`)**:
+   - Si un comando predecesor en un agregado fue marcado como `REJECTED`, el comando dependiente posterior ahora pasa automáticamente a `status = 'REJECTED'` con código `BLOCKED_BY_REJECTED_COMMAND:<key>`, en lugar de permanecer en `PENDING` indefinidamente.
+   - `OrderCommandDao` e `InventoryCommandDao` incorporan `deleteBlockedOrRejectedCommands(actorId)` y `deleteRejectedCommands(actorId)`.
+   - Los repositorios `OrderRepository` e `InventoryRepository` exponen `cleanBlockedCommands(): Result<Int>` para depurar comandos huérfanos o fallidos permanentemente.
+
+3. **Verificación de conteo real en Dashboard**:
+   - Tras ejecutar la sincronización forzada, `DashboardViewModel` consulta el conteo real remanente en SQLite mediante `getPendingCountForActor(actor)`.
+   - Si aún quedan comandos pendientes o si algún comando falló durante la transmisión RPC, se presenta el mensaje de error explícito (ej. `Pendiente (X): <detalle_falla>`) y se bloquea el falso positivo verde.
+   - En `DashboardScreen`, la tarjeta de alerta de sincronización incluye el enlace "Limpiar bloqueados" para depurar comandos rechazados y refrescar el estado.
+

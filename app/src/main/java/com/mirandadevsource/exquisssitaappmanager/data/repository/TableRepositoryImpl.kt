@@ -103,8 +103,10 @@ class TableRepositoryImpl @Inject constructor(
         return persistTableCommand(actor, tableId, "UPDATE", table.syncVersion, payload, table.copy(estado = status, syncState = TableEntity.PENDING, actorUserId = actor))
     }
 
-    override suspend fun syncPendingCommands(): Result<Unit> {
-        val result = syncActorCommands()
+    override suspend fun syncPendingCommands(): Result<Unit> = syncPendingCommands(force = false)
+
+    override suspend fun syncPendingCommands(force: Boolean): Result<Unit> {
+        val result = syncActorCommands(force = force)
         if (result.isSuccess && hasRemoteSession()) return refreshTables()
         return result
     }

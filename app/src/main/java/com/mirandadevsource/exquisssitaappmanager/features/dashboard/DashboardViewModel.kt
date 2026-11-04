@@ -5,8 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.InventoryCommandDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.OrderCommandDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.TransactionDao
+import com.mirandadevsource.exquisssitaappmanager.core.utils.DateUtils
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.AuthState
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.OrderStatus
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.TableStatus
+import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.CashRegisterRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.InventoryRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.OrderRepository
@@ -14,16 +17,20 @@ import com.mirandadevsource.exquisssitaappmanager.domain.repository.PaymentRepos
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.TableRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.payroll.GetWeeklyPayrollStatusUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
     private val tableRepository: TableRepository,
@@ -35,6 +42,7 @@ class DashboardViewModel @Inject constructor(
     private val transactionDao: TransactionDao,
     private val orderCommandDao: OrderCommandDao,
     private val inventoryCommandDao: InventoryCommandDao,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DashboardUiState())
@@ -57,8 +65,7 @@ class DashboardViewModel @Inject constructor(
         // 2. Observar órdenes del día y órdenes vivas abiertas
         viewModelScope.launch {
             orderRepository.observeOrders().collect { orders ->
-                val todayStr = LocalDate.now(MEXICO_ZONE).toString()
-                val todayOrders = orders.filter { it.openedAt.startsWith(todayStr) }
+                val todayOrders = orders.filter { DateUtils.isTodayInMexico(it.openedAt) }
                 val openCount = orders.count { it.status == OrderStatus.OPEN }
                 _uiState.update {
                     it.copy(
@@ -72,8 +79,7 @@ class DashboardViewModel @Inject constructor(
         // 3. Observar transacciones registradas de hoy para totalizar ventas
         viewModelScope.launch {
             transactionDao.observeAll().collect { txs ->
-                val todayStr = LocalDate.now(MEXICO_ZONE).toString()
-                val todayTxs = txs.filter { it.fecha.startsWith(todayStr) }
+                val todayTxs = txs.filter { DateUtils.isTodayInMexico(it.fecha) }
                 val sumCents = todayTxs.sumOf { it.montoCentavos }
                 _uiState.update { current ->
                     current.copy(
@@ -84,13 +90,20 @@ class DashboardViewModel @Inject constructor(
             }
         }
 
-        // 4. Observar comandos pendientes en colas de sincronización (Outbox)
+        // 4. Observar comandos pendientes en colas de sincronización (Outbox) de la sesión activa
         viewModelScope.launch {
-            combine(
-                orderCommandDao.observePendingCount(),
-                inventoryCommandDao.observePendingCount(),
-            ) { orderPending, invPending ->
-                orderPending + invPending
+            authRepository.state.flatMapLatest { authState ->
+                val actor = (authState as? AuthState.SignedIn)?.session?.userId
+                if (actor.isNullOrBlank()) {
+                    flowOf(0)
+                } else {
+                    combine(
+                        orderCommandDao.observePendingCountForActor(actor),
+                        inventoryCommandDao.observePendingCountForActor(actor),
+                    ) { orderPending, invPending ->
+                        orderPending + invPending
+                    }
+                }
             }.collect { totalPending ->
                 _uiState.update { it.copy(pendingSyncCount = totalPending) }
             }
@@ -162,27 +175,88 @@ class DashboardViewModel @Inject constructor(
     fun syncPendingData() {
         viewModelScope.launch {
             _uiState.update { it.copy(isSyncing = true, errorMessage = null, userMessage = null) }
-            val tResult = tableRepository.syncPendingCommands()
-            val oResult = orderRepository.syncPendingCommands()
-            val pResult = paymentRepository.syncPendingPayments()
-            val iResult = inventoryRepository.syncPendingCommands()
-            val payrollResult = getWeeklyPayrollStatusUseCase(LocalDate.now(MEXICO_ZONE))
 
-            if (tResult.isFailure || oResult.isFailure || pResult.isFailure || iResult.isFailure || payrollResult.isFailure) {
+            // Limpiar comandos bloqueados por errores permanentes o dependencias rechazadas
+            orderRepository.cleanBlockedCommands()
+            inventoryRepository.cleanBlockedCommands()
+
+            // Forzar sincronización inmediata (bypass de backoff exponencial)
+            val tResult = tableRepository.syncPendingCommands(force = true)
+            val oResult = orderRepository.syncPendingCommands(force = true)
+            val pResult = paymentRepository.syncPendingPayments(force = true)
+            val iResult = inventoryRepository.syncPendingCommands(force = true)
+
+            // Refrescar datos locales con el estado más reciente del servidor
+            refreshDashboard()
+
+            val actor = (authRepository.state.value as? AuthState.SignedIn)?.session?.userId
+            val remainingOrders = if (actor != null) orderCommandDao.getPendingCountForActor(actor) else 0
+            val remainingInventory = if (actor != null) inventoryCommandDao.getPendingCountForActor(actor) else 0
+            val totalRemaining = remainingOrders + remainingInventory
+
+            val hasFailures = tResult.isFailure || oResult.isFailure || pResult.isFailure || iResult.isFailure || totalRemaining > 0
+            if (hasFailures) {
+                val errorReason = listOfNotNull(
+                    oResult.exceptionOrNull()?.message,
+                    pResult.exceptionOrNull()?.message,
+                    iResult.exceptionOrNull()?.message,
+                    tResult.exceptionOrNull()?.message,
+                ).firstOrNull { it.isNotBlank() }
+
+                val message = if (totalRemaining > 0) {
+                    if (!errorReason.isNullOrBlank()) {
+                        "Pendiente ($totalRemaining): $errorReason"
+                    } else {
+                        "Quedan $totalRemaining operaciones pendientes de sincronizar. Verifica tu conexión."
+                    }
+                } else {
+                    errorReason ?: "Algunas operaciones no pudieron sincronizarse. Verifica tu conexión."
+                }
+
                 _uiState.update {
                     it.copy(
                         isSyncing = false,
-                        errorMessage = "Algunas operaciones no pudieron sincronizarse. Verifica tu conexión.",
+                        errorMessage = message,
+                        userMessage = null,
                     )
                 }
             } else {
-                refreshDashboard()
                 _uiState.update {
                     it.copy(
                         isSyncing = false,
                         userMessage = "Sincronización completada exitosamente.",
+                        errorMessage = null,
                     )
                 }
+            }
+        }
+    }
+
+    fun cleanBlockedCommands() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncing = true, errorMessage = null, userMessage = null) }
+            val oCleaned = orderRepository.cleanBlockedCommands().getOrDefault(0)
+            val iCleaned = inventoryRepository.cleanBlockedCommands().getOrDefault(0)
+            val totalCleaned = oCleaned + iCleaned
+            refreshDashboard()
+
+            val actor = (authRepository.state.value as? AuthState.SignedIn)?.session?.userId
+            val remainingOrders = if (actor != null) orderCommandDao.getPendingCountForActor(actor) else 0
+            val remainingInventory = if (actor != null) inventoryCommandDao.getPendingCountForActor(actor) else 0
+            val totalRemaining = remainingOrders + remainingInventory
+
+            _uiState.update {
+                it.copy(
+                    isSyncing = false,
+                    userMessage = if (totalCleaned > 0) {
+                        "Se limpiaron $totalCleaned operaciones bloqueadas o rechazadas."
+                    } else {
+                        "No se encontraron operaciones bloqueadas para limpiar."
+                    },
+                    errorMessage = if (totalRemaining > 0) {
+                        "Aún quedan $totalRemaining operaciones pendientes legítimas."
+                    } else null,
+                )
             }
         }
     }

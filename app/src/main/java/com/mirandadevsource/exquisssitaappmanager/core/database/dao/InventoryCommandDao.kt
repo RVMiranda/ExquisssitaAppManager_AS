@@ -27,4 +27,19 @@ interface InventoryCommandDao {
 
     @Query("SELECT COUNT(*) FROM inventory_command_outbox WHERE status IN ('PENDING', 'PROCESSING', 'CONFIRMED_AWAITING_REFRESH')")
     fun observePendingCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM inventory_command_outbox WHERE actorUserId = :actorId AND status IN ('PENDING', 'PROCESSING', 'CONFIRMED_AWAITING_REFRESH')")
+    fun observePendingCountForActor(actorId: String): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM inventory_command_outbox WHERE actorUserId = :actorId AND status IN ('PENDING', 'PROCESSING', 'CONFIRMED_AWAITING_REFRESH')")
+    suspend fun getPendingCountForActor(actorId: String): Int
+
+    @Query("UPDATE inventory_command_outbox SET nextAttemptAtMillis = NULL, status = 'PENDING' WHERE actorUserId = :actorId AND status = 'PROCESSING'")
+    suspend fun resetInterruptedProcessing(actorId: String): Int
+
+    @Query("UPDATE inventory_command_outbox SET nextAttemptAtMillis = NULL WHERE actorUserId = :actorId AND status IN ('PENDING', 'CONFIRMED_AWAITING_REFRESH')")
+    suspend fun clearBackoffForActor(actorId: String): Int
+
+    @Query("DELETE FROM inventory_command_outbox WHERE actorUserId = :actorId AND status = 'REJECTED'")
+    suspend fun deleteRejectedCommands(actorId: String): Int
 }

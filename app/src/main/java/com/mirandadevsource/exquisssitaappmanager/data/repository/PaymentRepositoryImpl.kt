@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.mirandadevsource.exquisssitaappmanager.core.database.AppDatabase
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.*
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.OrderCommandEntity
+import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.OrderEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.PaymentDetailEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.PaymentStockEntity
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.TransactionEntity
@@ -84,7 +85,7 @@ class PaymentRepositoryImpl @Inject constructor(
             return Result.failure(IllegalArgumentException("El importe y las asignaciones del pago no coinciden."))
         }
         val order = orderDao.getById(request.orderId) ?: return Result.failure(NoSuchElementException("Orden no disponible en el caché."))
-        if (order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local."))
+        if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
         if (order.estado != OrderStatus.OPEN.databaseValue) return Result.failure(IllegalStateException("La orden no está abierta."))
         if (commandDao.countPendingPayments(actor, request.orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un pago pendiente de confirmación."))
         val total = detailDao.getForOrder(request.orderId).filter { it.estadoPago != PaymentLineStatus.CANCELLED.databaseValue }
@@ -128,8 +129,10 @@ class PaymentRepositoryImpl @Inject constructor(
         catch (failure: Exception) { Result.failure(failure) }
     }
 
-    override suspend fun syncPendingPayments(): Result<Unit> {
-        val paymentSyncResult = syncActorCommands(includePayments = true)
+    override suspend fun syncPendingPayments(): Result<Unit> = syncPendingPayments(force = false)
+
+    override suspend fun syncPendingPayments(force: Boolean): Result<Unit> {
+        val paymentSyncResult = syncActorCommands(includePayments = true, force = force)
         if (paymentSyncResult.isFailure) return paymentSyncResult
         val actor = actorId() ?: return Result.success(Unit)
         return try {

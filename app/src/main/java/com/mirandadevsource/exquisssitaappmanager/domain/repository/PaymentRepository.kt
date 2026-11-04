@@ -8,5 +8,6 @@ import kotlinx.coroutines.flow.Flow
 interface PaymentRepository {
     fun observePayments(orderId: String): Flow<List<Payment>>
     suspend fun processPayment(request: PaymentRequest): Result<PaymentCommand>
-    suspend fun syncPendingPayments(): Result<Unit>
+    suspend fun syncPendingPayments(): Result<Unit> = syncPendingPayments(force = false)
+    suspend fun syncPendingPayments(force: Boolean): Result<Unit> = Result.success(Unit)
 }

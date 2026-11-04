@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.Loyalty
 import androidx.compose.material.icons.outlined.Payments
@@ -52,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -178,6 +180,43 @@ fun DashboardScreen(
             }
 
             // Mensajes de confirmación o alerta
+            if (uiState.errorMessage != null) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = uiState.errorMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = "OK",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clickable { viewModel.dismissUserMessage() }
+                                .padding(4.dp),
+                        )
+                    }
+                }
+            }
+
             if (uiState.userMessage != null) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
@@ -421,6 +460,8 @@ fun DashboardScreen(
                     actionLabel = if (uiState.isSyncing) "Sincronizando..." else "Sincronizar ahora",
                     actionEnabled = !uiState.isSyncing,
                     onAction = { viewModel.syncPendingData() },
+                    secondaryActionLabel = if (uiState.hasPendingSyncAlert && !uiState.isSyncing) "Limpiar bloqueados" else null,
+                    onSecondaryAction = { viewModel.cleanBlockedCommands() },
                 )
             }
 
@@ -505,6 +546,8 @@ private fun PriorityAlertCard(
     onAction: () -> Unit,
     modifier: Modifier = Modifier,
     actionEnabled: Boolean = true,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null,
 ) {
     val bgColor = if (isAlert) WarningAmberBg else Color.White.copy(alpha = 0.7f)
     val borderColor = if (isAlert) WarningAmberBorder else ApricotIllusion
@@ -561,21 +604,38 @@ private fun PriorityAlertCard(
             }
 
             if (isAlert) {
-                OutlinedButton(
-                    onClick = onAction,
-                    enabled = actionEnabled,
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, BrandyBrown),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = BrandyBrown,
-                    ),
-                    modifier = Modifier.height(36.dp),
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(
-                        text = actionLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    OutlinedButton(
+                        onClick = onAction,
+                        enabled = actionEnabled,
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BrandyBrown),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = BrandyBrown,
+                        ),
+                        modifier = Modifier.height(36.dp),
+                    ) {
+                        Text(
+                            text = actionLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+
+                    if (secondaryActionLabel != null && onSecondaryAction != null) {
+                        Text(
+                            text = secondaryActionLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = BrandyBrown,
+                            textDecoration = TextDecoration.Underline,
+                            modifier = Modifier
+                                .clickable(enabled = actionEnabled, onClick = onSecondaryAction)
+                                .padding(vertical = 2.dp, horizontal = 4.dp),
+                        )
+                    }
                 }
             }
         }

@@ -46,6 +46,8 @@ abstract class OrderSyncSupport(
             val latest = commandDao.getByKey(command.idempotencyKey) ?: return@withActorLease
             if (latest.status == OrderCommandEntity.SYNCED || latest.status == OrderCommandEntity.REJECTED) {
                 outcome = latest
+            } else if (blockOnEarlierCommand(latest)) {
+                outcome = commandDao.getByKey(latest.idempotencyKey) ?: latest
             } else if (latest.nextAttemptAtMillis == null || latest.nextAttemptAtMillis <= System.currentTimeMillis()) {
                 outcome = submitClaimed(latest)
             } else {
@@ -102,29 +104,78 @@ abstract class OrderSyncSupport(
         }
     }
 
-    protected suspend fun syncActorCommands(includePayments: Boolean = false): Result<Unit> {
+    protected suspend fun syncActorCommands(includePayments: Boolean = false, force: Boolean = false): Result<Unit> {
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa para sincronizar."))
-        if (!networkMonitor.isOnline() || !hasRemoteSession()) return Result.success(Unit)
+        if (!networkMonitor.isOnline() || !hasRemoteSession()) {
+            return if (force) Result.failure(IllegalStateException("No hay conexión con el servidor para sincronizar."))
+            else Result.success(Unit)
+        }
         return try {
+            var failedCount = 0
+            var lastErrorMessage: String? = null
             val acquired = SyncExecutionMutex.withActorLease(actor, leaseDao) {
-                commandDao.getRecoverableForActor(actor, System.currentTimeMillis())
+                if (force) {
+                    commandDao.resetInterruptedProcessing(actor)
+                    commandDao.clearBackoffForActor(actor)
+                    commandDao.markBlockedCommandsAsRejected(actor)
+                }
+                val pendingList = commandDao.getRecoverableForActor(actor, if (force) Long.MAX_VALUE else System.currentTimeMillis())
                     .filter { includePayments || it.entity != "registrar_pago" }
-                    .forEach { pending ->
-                        val latest = commandDao.getByKey(pending.idempotencyKey) ?: return@forEach
-                        if (latest.status != OrderCommandEntity.SYNCED && latest.status != OrderCommandEntity.REJECTED &&
-                            (latest.nextAttemptAtMillis == null || latest.nextAttemptAtMillis <= System.currentTimeMillis())
-                        ) {
-                            submitClaimed(latest)
+
+                for (pending in pendingList) {
+                    val latest = commandDao.getByKey(pending.idempotencyKey) ?: continue
+                    if (latest.status != OrderCommandEntity.SYNCED && latest.status != OrderCommandEntity.REJECTED &&
+                        (force || latest.nextAttemptAtMillis == null || latest.nextAttemptAtMillis <= System.currentTimeMillis())
+                    ) {
+                        if (blockOnEarlierCommand(latest)) {
+                            failedCount++
+                            lastErrorMessage = "Comando bloqueado por operación previa no resuelta."
+                        } else {
+                            val outcome = submitClaimed(latest)
+                            if (outcome.status != OrderCommandEntity.SYNCED) {
+                                failedCount++
+                                lastErrorMessage = outcome.lastErrorCode
+                            }
                         }
                     }
+                }
             }
-            if (acquired) Result.success(Unit)
-            else Result.failure(IllegalStateException("La sincronización de esta cuenta ya está activa en otra ejecución."))
+            if (!acquired) {
+                Result.failure(IllegalStateException("La sincronización de esta cuenta ya está activa en otra ejecución."))
+            } else if (failedCount > 0) {
+                Result.failure(IllegalStateException(lastErrorMessage ?: "No se pudieron sincronizar $failedCount operaciones."))
+            } else {
+                Result.success(Unit)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
             Result.failure(failure)
         }
+    }
+
+    /**
+     * Enforces FIFO within a table/order aggregate. A rejected predecessor permanently
+     * blocks later intents until the user resolves the aggregate; a retryable predecessor
+     * simply holds later intents until it confirms.
+     */
+    private suspend fun blockOnEarlierCommand(command: OrderCommandEntity): Boolean {
+        val earlier = commandDao.getEarlierUnresolvedForAggregate(
+            actorId = command.actorUserId,
+            aggregateId = command.aggregateId,
+            createdAtMillis = command.createdAtMillis,
+            key = command.idempotencyKey,
+        )
+        if (earlier.isEmpty()) return false
+        val rejected = earlier.firstOrNull { it.status == OrderCommandEntity.REJECTED }
+        if (rejected != null && command.status != OrderCommandEntity.REJECTED) {
+            commandDao.update(command.copy(
+                status = OrderCommandEntity.REJECTED,
+                lastErrorCode = "BLOCKED_BY_REJECTED_COMMAND:${rejected.idempotencyKey}",
+                updatedAtMillis = System.currentTimeMillis(),
+            ))
+        }
+        return true
     }
 
     protected fun Throwable.isNetworkFailure(): Boolean {

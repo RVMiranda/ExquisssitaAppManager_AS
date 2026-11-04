@@ -8,5 +8,6 @@ interface TableRepository {
     suspend fun refreshTables(): Result<Unit>
     suspend fun createTable(number: String): Result<String>
     suspend fun setReservation(tableId: String, reserved: Boolean): Result<String>
-    suspend fun syncPendingCommands(): Result<Unit>
+    suspend fun syncPendingCommands(): Result<Unit> = syncPendingCommands(force = false)
+    suspend fun syncPendingCommands(force: Boolean): Result<Unit> = Result.success(Unit)
 }
