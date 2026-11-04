@@ -1,0 +1,42 @@
+{
+  "masters": {
+    "medio_cuerpo": {
+      "paths": 39,
+      "bytes": 97030
+    },
+    "busto": {
+      "paths": 26,
+      "bytes": 73053
+    }
+  },
+  "exports": {
+    "busto_2048.png": {
+      "size": [
+        2048,
+        2048
+      ],
+      "mode": "RGBA",
+      "icc_profile": true,
+      "bytes": 217777
+    },
+    "google_play_512.png": {
+      "size": [
+        512,
+        512
+      ],
+      "mode": "RGBA",
+      "icc_profile": true,
+      "bytes": 74759
+    },
+    "medio_cuerpo_2048.png": {
+      "size": [
+        2048,
+        2048
+      ],
+      "mode": "RGBA",
+      "icc_profile": true,
+      "bytes": 253726
+    }
+  },
+  "safe_radius_dp": 32.39261104017396
+}
