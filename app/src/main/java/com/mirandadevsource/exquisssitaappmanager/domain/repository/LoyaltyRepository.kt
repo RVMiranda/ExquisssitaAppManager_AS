@@ -16,6 +16,13 @@ interface LoyaltyRepository {
 
     suspend fun getRewards(includeInactive: Boolean = false): Result<List<LoyaltyReward>>
 
+    /** Returns reward IDs redeemed by this specific customer inside `[fromIso, toIso)`. */
+    suspend fun getCustomerRedeemedRewardIds(
+        customerId: String,
+        fromIso: String,
+        toIso: String,
+    ): Result<Set<String>>
+
     /** Only admin may create or update rewards; the backend validates role and expected version. */
     suspend fun manageReward(
         rewardId: String,

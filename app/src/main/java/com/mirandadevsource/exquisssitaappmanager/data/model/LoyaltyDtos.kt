@@ -44,6 +44,11 @@ data class LoyaltyRewardDto(
 )
 
 @Serializable
+data class CustomerRedeemedRewardDto(
+    @SerialName("recompensa_id") val rewardId: String,
+)
+
+@Serializable
 data class ManageLoyaltyRewardRequestDto(
     @SerialName("p_id") val id: String,
     @SerialName("p_titulo") val title: String,

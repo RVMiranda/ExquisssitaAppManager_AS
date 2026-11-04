@@ -53,6 +53,12 @@ class RegisterCustomerVisitUseCaseTest {
         override suspend fun getRewards(includeInactive: Boolean): Result<List<LoyaltyReward>> =
             Result.success(emptyList())
 
+        override suspend fun getCustomerRedeemedRewardIds(
+            customerId: String,
+            fromIso: String,
+            toIso: String,
+        ): Result<Set<String>> = Result.success(emptySet())
+
         override suspend fun manageReward(
             rewardId: String,
             title: String,

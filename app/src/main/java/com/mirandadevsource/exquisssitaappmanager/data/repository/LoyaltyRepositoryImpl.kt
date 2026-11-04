@@ -4,6 +4,7 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.dao.CustomerCach
 import com.mirandadevsource.exquisssitaappmanager.core.database.local.entities.CustomerCacheEntity
 import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.data.model.CustomerDto
+import com.mirandadevsource.exquisssitaappmanager.data.model.CustomerRedeemedRewardDto
 import com.mirandadevsource.exquisssitaappmanager.data.model.CustomerVisitDto
 import com.mirandadevsource.exquisssitaappmanager.data.model.LoyaltyRewardDto
 import com.mirandadevsource.exquisssitaappmanager.data.model.ManageLoyaltyRewardRequestDto
@@ -28,6 +29,7 @@ import kotlinx.coroutines.CancellationException
 import java.security.MessageDigest
 import java.io.IOException
 import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.UUID
 import javax.inject.Inject
 
@@ -42,17 +44,15 @@ class LoyaltyRepositoryImpl @Inject constructor(
         val actor = currentActor()
             ?: return Result.failure(SecurityException("Se requiere una sesión activa para consultar lealtad."))
         return remoteRequest {
-        validateQrPayload(qrPayload)
-        if (currentActor() != actor) throw SecurityException("La sesión cambió durante la consulta.")
-        val rows = supabase.from(CUSTOMERS_TABLE)
-            .select(columns = CUSTOMER_COLUMNS) {
-                filter { eq("qr_token_hash", sha256(qrPayload)) }
+            validateQrPayload(qrPayload)
+            if (currentActor() != actor) throw SecurityException("La sesión cambió durante la consulta.")
+            val response = supabase.postgrest
+                .rpc("consultar_cliente_qr", RegisterVisitRequestDto(qrPayload))
+                .decodeAsOrNull<CustomerDto>()
+            response?.let { dto ->
+                customerCacheDao.upsert(dto.toCache(actor))
+                dto.toDomain()
             }
-            .decodeList<CustomerDto>()
-        rows.singleOrNull()?.let { dto ->
-            customerCacheDao.upsert(dto.toCache(actor))
-            dto.toDomain()
-        }
         }
     }
 
@@ -107,12 +107,7 @@ class LoyaltyRepositoryImpl @Inject constructor(
             .decodeAs<CustomerVisitDto>()
 
         val totals = if (response.visitasTotales == null || response.puntosLealtad == null) {
-            supabase.from(CUSTOMERS_TABLE)
-                .select(columns = CUSTOMER_COLUMNS) {
-                    filter { eq("qr_token_hash", sha256(qrPayload)) }
-                }
-                .decodeList<CustomerDto>()
-                .singleOrNull()
+            fetchCustomer(response.clienteId)
         } else null
 
         val cached = customerCacheDao.findById(response.clienteId, actor)
@@ -146,6 +141,9 @@ class LoyaltyRepositoryImpl @Inject constructor(
         }
         val signedIn = (authRepository.state.value as? AuthState.SignedIn)?.session
             ?: return Result.failure(SecurityException("Se requiere una sesión activa para consultar recompensas."))
+        if (signedIn.role != UserRole.ADMIN && signedIn.role != UserRole.GERENTE) {
+            return Result.failure(SecurityException("Sólo administración y gerencia pueden consultar recompensas en Manager."))
+        }
         if (includeInactive && signedIn.role != UserRole.ADMIN) {
             return Result.failure(SecurityException("Sólo administración puede consultar recompensas inactivas."))
         }
@@ -155,6 +153,40 @@ class LoyaltyRepositoryImpl @Inject constructor(
                 order("titulo", io.github.jan.supabase.postgrest.query.Order.ASCENDING)
                 order("id", io.github.jan.supabase.postgrest.query.Order.ASCENDING)
             }.decodeList<LoyaltyRewardDto>().map { it.toDomain() }
+        }
+    }
+
+    override suspend fun getCustomerRedeemedRewardIds(
+        customerId: String,
+        fromIso: String,
+        toIso: String,
+    ): Result<Set<String>> {
+        if (runCatching { UUID.fromString(customerId) }.isFailure) {
+            return Result.failure(IllegalArgumentException("El identificador del cliente no es válido."))
+        }
+        val range = runCatching {
+            OffsetDateTime.parse(fromIso).toInstant() to OffsetDateTime.parse(toIso).toInstant()
+        }.getOrElse {
+            return Result.failure(IllegalArgumentException("El periodo de canje no tiene fechas válidas."))
+        }
+        if (!range.first.isBefore(range.second)) {
+            return Result.failure(IllegalArgumentException("El periodo de canje no es válido."))
+        }
+        val session = (authRepository.state.value as? AuthState.SignedIn)?.session
+            ?: return Result.failure(SecurityException("Se requiere una sesión activa para consultar canjes."))
+        if (session.role != UserRole.ADMIN && session.role != UserRole.GERENTE) {
+            return Result.failure(SecurityException("Sólo administración y gerencia pueden consultar canjes."))
+        }
+        return remoteRequest {
+            supabase.from(REDEMPTIONS_TABLE).select(columns = REDEMPTION_COLUMNS) {
+                filter {
+                    eq("cliente_id", customerId)
+                    gte("created_at", fromIso)
+                    lt("created_at", toIso)
+                }
+                order("created_at", io.github.jan.supabase.postgrest.query.Order.ASCENDING)
+                order("id", io.github.jan.supabase.postgrest.query.Order.ASCENDING)
+            }.decodeList<CustomerRedeemedRewardDto>().mapTo(linkedSetOf()) { it.rewardId }
         }
     }
 
@@ -343,7 +375,7 @@ class LoyaltyRepositoryImpl @Inject constructor(
     }
 
     private fun validateQrPayload(payload: String) {
-        require(payload.length in MIN_QR_TOKEN_LENGTH..MAX_QR_TOKEN_LENGTH) {
+        require(payload.length == QR_TOKEN_LENGTH) {
             "El código QR no es válido."
         }
     }
@@ -368,13 +400,14 @@ class LoyaltyRepositoryImpl @Inject constructor(
     private companion object {
         const val CUSTOMERS_TABLE = "clientes"
         const val REWARDS_TABLE = "recompensas"
-        const val MIN_QR_TOKEN_LENGTH = 32
-        const val MAX_QR_TOKEN_LENGTH = 512
+        const val REDEMPTIONS_TABLE = "canjes_recompensas"
+        const val QR_TOKEN_LENGTH = 64
         const val REDEEM_QR_TOKEN_LENGTH = 64
         const val CONFIRMED_STATUS = "confirmed"
         val CUSTOMER_COLUMNS = Columns.list(
             "id, nombre, telefono, visitas_totales, puntos_lealtad, fecha_registro, created_at",
         )
         val REWARD_COLUMNS = Columns.list("id, titulo, descripcion, costo_puntos, activo, sync_version")
+        val REDEMPTION_COLUMNS = Columns.list("id, recompensa_id, created_at")
     }
 }

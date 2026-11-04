@@ -39,7 +39,6 @@ class LoyaltyUiTest {
         val state = LoyaltyUiState()
         assertEquals(0, state.selectedTab)
         assertEquals("", state.phoneInput)
-        assertEquals("", state.qrTokenInput)
         assertFalse(state.isSearching)
         assertFalse(state.isRegisteringVisit)
         assertNull(state.customer)
@@ -50,6 +49,36 @@ class LoyaltyUiTest {
         assertNull(state.warningNotification)
         assertNull(state.errorNotification)
         assertNull(state.rewardNotice)
+        assertFalse(state.isRedeemDialogOpen)
+        assertFalse(state.isLoadingRedeemRewards)
+        assertTrue(state.redeemableRewards.isEmpty())
+        assertNull(state.selectedRewardForRedemption)
+        assertFalse(state.isExecutingRedemption)
+        assertNull(state.redemptionError)
+    }
+
+    @Test
+    fun `canOpenRedemption is true only when online, has scanned QR, has valid non-cached customer and not busy`() {
+        val validState = LoyaltyUiState(
+            isOnline = true,
+            hasScannedQrToken = true,
+            customer = sampleCustomer,
+            isRegisteringVisit = false,
+            isExecutingRedemption = false,
+        )
+        assertTrue(validState.canOpenRedemption)
+
+        val offlineState = validState.copy(isOnline = false)
+        assertFalse(offlineState.canOpenRedemption)
+
+        val noQrState = validState.copy(hasScannedQrToken = false)
+        assertFalse(noQrState.canOpenRedemption)
+
+        val cachedCustomerState = validState.copy(customer = cachedCustomer)
+        assertFalse(cachedCustomerState.canOpenRedemption)
+
+        val busyState = validState.copy(isExecutingRedemption = true)
+        assertFalse(busyState.canOpenRedemption)
     }
 
     @Test
@@ -271,6 +300,12 @@ class LoyaltyUiTest {
 
         override suspend fun getRewards(includeInactive: Boolean): Result<List<LoyaltyReward>> =
             Result.success(emptyList())
+
+        override suspend fun getCustomerRedeemedRewardIds(
+            customerId: String,
+            fromIso: String,
+            toIso: String,
+        ): Result<Set<String>> = Result.success(emptySet())
 
         override suspend fun manageReward(
             rewardId: String,
