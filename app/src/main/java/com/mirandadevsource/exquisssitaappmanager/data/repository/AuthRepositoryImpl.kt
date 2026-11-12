@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.IOException
 import javax.inject.Inject
 
@@ -191,9 +193,16 @@ class AuthRepositoryImpl @Inject constructor(
         }
 
         val employeeId = employee?.id.orEmpty()
+        val userMeta = supabase.auth.currentUserOrNull()?.userMetadata
+        val metaNombre = runCatching { userMeta?.get("nombre")?.jsonPrimitive?.contentOrNull }.getOrNull()
+        val metaApellido = runCatching { userMeta?.get("apellido")?.jsonPrimitive?.contentOrNull }.getOrNull()
+        val metaFullName = runCatching { userMeta?.get("full_name")?.jsonPrimitive?.contentOrNull }.getOrNull()
+        val metaName = listOfNotNull(metaNombre, metaApellido).filter(String::isNotBlank).joinToString(" ").ifBlank { null }
+            ?: metaFullName?.ifBlank { null }
+
         val employeeName = employee?.let {
             listOf(it.nombre, it.apellido).filter(String::isNotBlank).joinToString(" ")
-        }?.ifBlank { null } ?: if (role == UserRole.ADMIN) "Administrador" else "Personal"
+        }?.ifBlank { null } ?: metaName ?: if (role == UserRole.ADMIN) "Administrador" else "Personal"
 
         return CachedAuthMetadata(
             userId = userId,

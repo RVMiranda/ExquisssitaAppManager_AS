@@ -31,4 +31,13 @@ interface EmployeeDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(employees: List<EmployeeEntity>)
+
+    @Query("DELETE FROM employee_cache WHERE cacheActorUserId = :actorUserId AND syncState = 'SYNCED' AND remoteId NOT IN (:remoteIds)")
+    suspend fun deleteSyncedNotIn(actorUserId: String, remoteIds: List<String>)
+
+    @Query("DELETE FROM employee_cache WHERE cacheActorUserId = :actorUserId AND syncState = 'SYNCED'")
+    suspend fun deleteAllSynced(actorUserId: String)
+
+    @Query("DELETE FROM employee_cache WHERE remoteId IN (:remoteIds) OR localId IN (:remoteIds)")
+    suspend fun deleteByRemoteIds(remoteIds: List<String>)
 }

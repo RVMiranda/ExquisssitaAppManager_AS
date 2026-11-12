@@ -43,6 +43,12 @@ class EmployeeRepositoryImpl @Inject constructor(
             syncCoordinator.syncPending()
             val remoteRows = fetchAllEmployees(includeInactive)
             if (!canUseRemote(session)) return Result.failure(SecurityException("La sesión cambió durante la consulta; vuelve a sincronizar."))
+            val remoteIds = remoteRows.map { it.id }
+            if (remoteIds.isNotEmpty()) {
+                employeeDao.deleteSyncedNotIn(actor, remoteIds)
+            } else {
+                employeeDao.deleteAllSynced(actor)
+            }
             remoteRows.forEach { remote ->
                 val cached = employeeDao.getByRemoteId(remote.id, actor)
                 if (cached == null || cached.syncState == EmployeeEntity.SYNCED) {
@@ -73,6 +79,15 @@ class EmployeeRepositoryImpl @Inject constructor(
                 range(page.offset.toLong()..(page.offset + page.limit).toLong())
             }.decodeList<EmployeeDto>()
             if (!canUseRemote(session)) return Result.failure(SecurityException("La sesión cambió durante la consulta; vuelve a cargar la lista."))
+            if (page.offset == 0) {
+                val allRemote = fetchAllEmployees(includeInactive)
+                val allRemoteIds = allRemote.map { it.id }
+                if (allRemoteIds.isNotEmpty()) {
+                    employeeDao.deleteSyncedNotIn(actor, allRemoteIds)
+                } else {
+                    employeeDao.deleteAllSynced(actor)
+                }
+            }
             val localRows = rows.map { dto ->
                 val cached = employeeDao.getByRemoteId(dto.id, actor)
                 if (cached == null || cached.syncState == EmployeeEntity.SYNCED) {

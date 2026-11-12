@@ -7,6 +7,7 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.AuthState
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Employee
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.EmployeeLoan
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.PageRequest
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.UserRole
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.EmployeeRepository
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.employees.CreateEmployeeLoanUseCase
@@ -72,7 +73,9 @@ class EmployeesViewModel @Inject constructor(
             val request = PageRequest(offset = 0, limit = 50)
             employeeRepository.getEmployeePage(includeInactive = includeInactive, page = request)
                 .onSuccess { dataPage ->
-                    val list = dataPage.items
+                    val list = dataPage.items.filter { emp ->
+                        !(emp.userId != null && emp.userId == _uiState.value.currentUserId && _uiState.value.currentUserRole == UserRole.ADMIN)
+                    }
                     val conflictedCount = list.count { it.syncState == "CONFLICT" }
                     _uiState.update {
                         it.copy(
@@ -116,7 +119,11 @@ class EmployeesViewModel @Inject constructor(
                 .onSuccess { dataPage ->
                     _uiState.update { current ->
                         val existingIds = current.employees.map { it.id }.toSet()
-                        val newItems = dataPage.items.filterNot { existingIds.contains(it.id) }
+                        val newItems = dataPage.items
+                            .filterNot { existingIds.contains(it.id) }
+                            .filter { emp ->
+                                !(emp.userId != null && emp.userId == current.currentUserId && current.currentUserRole == UserRole.ADMIN)
+                            }
                         current.copy(
                             isLoadingPage = false,
                             employees = current.employees + newItems,
