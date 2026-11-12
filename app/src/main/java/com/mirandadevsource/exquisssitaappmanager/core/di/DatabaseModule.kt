@@ -19,6 +19,8 @@ import com.mirandadevsource.exquisssitaappmanager.core.database.dao.PromotionDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.DailyClosureDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.CustomerCacheDao
 import com.mirandadevsource.exquisssitaappmanager.core.database.dao.SyncExecutionLeaseDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.ExpenseDao
+import com.mirandadevsource.exquisssitaappmanager.core.database.dao.ExpenseTemplateDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -42,6 +44,7 @@ object DatabaseModule {
             .addMigrations(MIGRATION_7_8)
             .addMigrations(MIGRATION_8_9)
             .addMigrations(MIGRATION_9_10)
+            .addMigrations(MIGRATION_10_11)
             .build()
 
     @Provides
@@ -85,6 +88,12 @@ object DatabaseModule {
 
     @Provides
     fun provideSyncExecutionLeaseDao(database: AppDatabase): SyncExecutionLeaseDao = database.syncExecutionLeaseDao()
+
+    @Provides
+    fun provideExpenseDao(database: AppDatabase): ExpenseDao = database.expenseDao()
+
+    @Provides
+    fun provideExpenseTemplateDao(database: AppDatabase): ExpenseTemplateDao = database.expenseTemplateDao()
 
     private const val DATABASE_NAME = "exquisssita_manager.db"
 
@@ -288,6 +297,55 @@ object DatabaseModule {
     private val MIGRATION_9_10 = object : Migration(9, 10) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL("ALTER TABLE product_cache ADD COLUMN `precioAbierto` INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
+    private val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `expense_template_cache` (
+                `localId` TEXT NOT NULL,
+                `remoteId` TEXT,
+                `cacheActorUserId` TEXT NOT NULL,
+                `nombre` TEXT NOT NULL,
+                `categoria` TEXT NOT NULL,
+                `precioUnitarioCents` INTEGER NOT NULL,
+                `unidadMedida` TEXT NOT NULL,
+                `activo` INTEGER NOT NULL,
+                `createdAt` TEXT NOT NULL,
+                `updatedAt` TEXT NOT NULL,
+                `syncVersion` INTEGER NOT NULL,
+                `syncState` TEXT NOT NULL,
+                `localUpdatedAtMillis` INTEGER NOT NULL,
+                PRIMARY KEY(`localId`)
+            )""")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_expense_template_cache_remoteId_cacheActorUserId` ON `expense_template_cache` (`remoteId`, `cacheActorUserId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_expense_template_cache_cacheActorUserId_activo` ON `expense_template_cache` (`cacheActorUserId`, `activo`)")
+
+            db.execSQL("""CREATE TABLE IF NOT EXISTS `expense_cache` (
+                `localId` TEXT NOT NULL,
+                `remoteId` TEXT,
+                `cacheActorUserId` TEXT NOT NULL,
+                `fecha` TEXT NOT NULL,
+                `concepto` TEXT NOT NULL,
+                `categoria` TEXT NOT NULL,
+                `montoCents` INTEGER NOT NULL,
+                `cantidad` REAL,
+                `precioUnitarioCents` INTEGER,
+                `metodoPago` TEXT NOT NULL,
+                `plantillaId` TEXT,
+                `notas` TEXT,
+                `registradoPor` TEXT,
+                `createdAt` TEXT NOT NULL,
+                `updatedAt` TEXT NOT NULL,
+                `syncVersion` INTEGER NOT NULL,
+                `syncState` TEXT NOT NULL,
+                `syncError` TEXT,
+                `localUpdatedAtMillis` INTEGER NOT NULL,
+                PRIMARY KEY(`localId`)
+            )""")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_expense_cache_remoteId_cacheActorUserId` ON `expense_cache` (`remoteId`, `cacheActorUserId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_expense_cache_cacheActorUserId_fecha` ON `expense_cache` (`cacheActorUserId`, `fecha`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_expense_cache_cacheActorUserId_categoria` ON `expense_cache` (`cacheActorUserId`, `categoria`)")
         }
     }
 }
