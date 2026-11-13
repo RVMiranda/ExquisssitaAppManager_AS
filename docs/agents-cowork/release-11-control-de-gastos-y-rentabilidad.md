@@ -271,3 +271,29 @@ Se completó satisfactoriamente la infraestructura de persistencia local en Room
 ### 7.5 Verificación y Calidad
 - Compilación de fuentes debug (`compileDebugSources`) completada exitosamente sin advertencias.
 - Suite completa de pruebas unitarias (`testDebugUnitTest`): 100% aprobada.
+
+---
+
+## 8. Diagnóstico y Corrección de Incidencias en Producción (PostgREST PGRST203 y Salud de BD)
+
+### 8.1 Error `PGRST203` en `registrar_pago_nomina`
+- **Causa Raíz:** En la migración `20261101160000_employee_loans_and_payroll_deductions.sql`, se añadió una nueva sobrecarga de 6 parámetros para `public.registrar_pago_nomina(p_empleado_id, p_fecha_inicio, p_fecha_fin, p_metodo_pago, p_monto_deduccion_prestamo, p_prestamo_id)` con valores por defecto en los parámetros 5 y 6. Sin embargo, no se eliminó la función preexistente de 4 parámetros `public.registrar_pago_nomina(p_empleado_id, p_fecha_inicio, p_fecha_fin, p_metodo_pago)`.
+  Al invocar la RPC desde la aplicación con 4 argumentos, PostgREST no pudo discernir cuál de las dos funciones candidatas ejecutar, arrojando el error `PGRST203: could not choose the best candidate function`.
+- **Solución:** Se creó la migración `supabase/migrations/20261112210000_drop_overloaded_payroll_payment_rpc.sql` que eliminó la sobrecarga obsoleta de 4 parámetros:
+  `DROP FUNCTION IF EXISTS public.registrar_pago_nomina(uuid, date, date, text);`
+  dejando únicamente la función unificada de 6 parámetros con defaults.
+- **Validación:** Se aplicó con `npx supabase db push --remote --yes` y se probó la invocación de la RPC vía PostgREST con `curl.exe`. La ambigüedad quedó completamente eliminada (código HTTP 400 por validación de UUIDs de prueba, confirmando resolución unívoca de la función en lugar de `PGRST203`).
+
+### 8.2 Corrección en `delete_customer_account` (PostgreSQL 17)
+- **Causa Raíz:** El linter de base de datos (`npx supabase db lint --remote`) identificó que la función `public.delete_customer_account` intentaba actualizar `confirmed_at = NULL` en la tabla `auth.users`, lo cual viola la restricción de PostgreSQL 17 (código `428C9`: `column "confirmed_at" can only be updated to DEFAULT`).
+- **Solución:** Se creó la migración `supabase/migrations/20261112213000_fix_delete_customer_account_confirmed_at.sql` sustituyendo `confirmed_at = NULL` por `confirmed_at = DEFAULT`.
+- **Validación:** Se desplegó a producción y se ejecutó `npx supabase db lint --remote`, certificando cero errores en el esquema de base de datos.
+
+### 8.3 Diagnóstico de Salud de Base de Datos y Supabase Realtime
+- **Diagnóstico del Estado "Unhealthy (Realtime: Unhealthy)":**
+  El reporte visual del panel de control de Supabase con advertencia en Realtime correspondió a la reanudación reciente del proyecto desde su estado de reposo (tal como indica la propia consola: *"Recently restored projects can take up to 5 minutes to become fully operational"*).
+- **Verificación desde CLI:**
+  - `npx supabase projects list`: El proyecto `LaExquisssita` (`gcszsxeywywsrgnnnljr`) se encuentra en estado `ACTIVE_HEALTHY`.
+  - Se verificó la réplica lógica y publicación `supabase_realtime`: las 20 tablas del proyecto (incluidas las nuevas tablas `gastos` y `plantillas_gastos`) cuentan con clave primaria definida y replicación activa.
+  - El motor de base de datos PostgreSQL, la API PostgREST, el servicio Auth y el almacenamiento Storage operan con estado `Healthy`.
+
