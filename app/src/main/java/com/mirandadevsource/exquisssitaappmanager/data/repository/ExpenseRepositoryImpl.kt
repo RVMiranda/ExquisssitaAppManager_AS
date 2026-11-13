@@ -9,11 +9,13 @@ import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.data.mappers.toDomain
 import com.mirandadevsource.exquisssitaappmanager.data.mappers.toEntity
 import com.mirandadevsource.exquisssitaappmanager.data.model.CreateExpenseRequestDto
+import com.mirandadevsource.exquisssitaappmanager.data.model.CreateExpenseTemplateRequestDto
 import com.mirandadevsource.exquisssitaappmanager.data.model.DailyProfitRpcParams
 import com.mirandadevsource.exquisssitaappmanager.data.model.DailyProfitSummaryDto
 import com.mirandadevsource.exquisssitaappmanager.data.model.ExpenseDto
 import com.mirandadevsource.exquisssitaappmanager.data.model.ExpenseTemplateDto
 import com.mirandadevsource.exquisssitaappmanager.data.model.UpdateExpenseRequestDto
+import com.mirandadevsource.exquisssitaappmanager.data.model.UpdateExpenseTemplateRequestDto
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.AuthState
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.DailyProfitSummary
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Expense
@@ -307,18 +309,30 @@ class ExpenseRepositoryImpl @Inject constructor(
         }
     }
 
+    override fun getAllTemplatesFlow(): Flow<List<ExpenseTemplate>> {
+        return authRepository.state.flatMapLatest { state ->
+            val actor = (state as? AuthState.SignedIn)?.session?.userId
+            if (actor.isNullOrBlank()) {
+                flowOf(emptyList())
+            } else {
+                expenseTemplateDao.getAllTemplatesFlow(actor).map { list ->
+                    list.map { it.toDomain() }
+                }
+            }
+        }
+    }
+
     override suspend fun refreshTemplates(): Result<List<ExpenseTemplate>> {
         val session = currentSession()
             ?: return Result.failure(SecurityException("Se requiere una sesión activa para consultar plantillas."))
         val actor = session.userId
 
         if (!canUseRemote(session)) {
-            return readCachedTemplates(actor)
+            return readCachedTemplates(actor, includeInactive = true)
         }
 
         return try {
             val remoteRows = supabase.from(EXPENSE_TEMPLATES_TABLE).select {
-                filter { eq("activo", true) }
                 order("nombre", Order.ASCENDING)
             }.decodeList<ExpenseTemplateDto>()
 
@@ -331,16 +345,129 @@ class ExpenseRepositoryImpl @Inject constructor(
                 expenseTemplateDao.upsert(remote.toEntity(actor))
             }
 
-            readCachedTemplates(actor)
+            readCachedTemplates(actor, includeInactive = true)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
             if (failure.isNetworkFailure()) {
-                readCachedTemplates(actor)
+                readCachedTemplates(actor, includeInactive = true)
             } else {
                 Result.failure(failure)
             }
         }
+    }
+
+    override suspend fun saveTemplate(template: ExpenseTemplate): Result<ExpenseTemplate> {
+        val session = currentSession()
+            ?: return Result.failure(SecurityException("Se requiere una sesión activa para gestionar plantillas."))
+        val actor = session.userId
+
+        val templateId = if (template.id.isBlank()) UUID.randomUUID().toString() else template.id
+        val entity = template.copy(localId = templateId).toEntity(actor)
+
+        if (canUseRemote(session)) {
+            return try {
+                val existing = if (template.id.isNotBlank()) expenseTemplateDao.getByRemoteId(template.id, actor) else null
+                val savedDto = if (existing == null && template.remoteId.isNullOrBlank()) {
+                    val payload = CreateExpenseTemplateRequestDto(
+                        id = templateId,
+                        nombre = template.name,
+                        categoria = template.category,
+                        precioUnitario = template.unitPriceCents,
+                        unidadMedida = template.unitOfMeasure,
+                        activo = template.isActive,
+                    )
+                    supabase.from(EXPENSE_TEMPLATES_TABLE).insert(payload) {
+                        select()
+                    }.decodeSingle<ExpenseTemplateDto>()
+                } else {
+                    val remoteId = template.remoteId ?: template.id
+                    val payload = UpdateExpenseTemplateRequestDto(
+                        nombre = template.name,
+                        categoria = template.category,
+                        precioUnitario = template.unitPriceCents,
+                        unidadMedida = template.unitOfMeasure,
+                        activo = template.isActive,
+                        updatedAt = Instant.now().toString(),
+                    )
+                    supabase.from(EXPENSE_TEMPLATES_TABLE).update(payload) {
+                        filter { eq("id", remoteId) }
+                        select()
+                    }.decodeSingle<ExpenseTemplateDto>()
+                }
+                val savedEntity = savedDto.toEntity(actor)
+                expenseTemplateDao.upsert(savedEntity)
+                Result.success(savedEntity.toDomain())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (failure.isNetworkFailure()) {
+                    expenseTemplateDao.upsert(entity)
+                    Result.success(entity.toDomain())
+                } else {
+                    Result.failure(failure)
+                }
+            }
+        } else {
+            expenseTemplateDao.upsert(entity)
+            return Result.success(entity.toDomain())
+        }
+    }
+
+    override suspend fun deleteTemplate(templateId: String): Result<Unit> {
+        val session = currentSession()
+            ?: return Result.failure(SecurityException("Se requiere una sesión activa para eliminar plantillas."))
+
+        if (canUseRemote(session)) {
+            try {
+                supabase.from(EXPENSE_TEMPLATES_TABLE).delete {
+                    filter { eq("id", templateId) }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (!failure.isNetworkFailure()) {
+                    return Result.failure(failure)
+                }
+            }
+        }
+        expenseTemplateDao.deleteByLocalId(templateId)
+        return Result.success(Unit)
+    }
+
+    override suspend fun toggleTemplateActive(templateId: String, active: Boolean): Result<Unit> {
+        val session = currentSession()
+            ?: return Result.failure(SecurityException("Se requiere una sesión activa para modificar plantillas."))
+        val actor = session.userId
+
+        val cached = expenseTemplateDao.getByRemoteId(templateId, actor)
+            ?: expenseTemplateDao.getByLocalId(templateId)
+            ?: return Result.failure(IllegalArgumentException("Plantilla no encontrada"))
+
+        val updated = cached.copy(activo = active, localUpdatedAtMillis = System.currentTimeMillis())
+        expenseTemplateDao.upsert(updated)
+
+        if (canUseRemote(session)) {
+            try {
+                val remoteId = cached.remoteId ?: templateId
+                val payload = UpdateExpenseTemplateRequestDto(
+                    nombre = cached.nombre,
+                    categoria = cached.categoria,
+                    precioUnitario = cached.precioUnitarioCents,
+                    unidadMedida = cached.unidadMedida,
+                    activo = active,
+                    updatedAt = Instant.now().toString(),
+                )
+                supabase.from(EXPENSE_TEMPLATES_TABLE).update(payload) {
+                    filter { eq("id", remoteId) }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Silently tolerate network failures as Room is already updated
+            }
+        }
+        return Result.success(Unit)
     }
 
     override suspend fun getDailyProfitSummary(date: String): Result<DailyProfitSummary> {
@@ -418,8 +545,8 @@ class ExpenseRepositoryImpl @Inject constructor(
         Result.failure(failure)
     }
 
-    private suspend fun readCachedTemplates(actor: String): Result<List<ExpenseTemplate>> = try {
-        val list = expenseTemplateDao.getTemplates(actor, includeInactive = false).map { it.toDomain() }
+    private suspend fun readCachedTemplates(actor: String, includeInactive: Boolean = false): Result<List<ExpenseTemplate>> = try {
+        val list = expenseTemplateDao.getTemplates(actor, includeInactive = includeInactive).map { it.toDomain() }
         Result.success(list)
     } catch (cancelled: CancellationException) {
         throw cancelled

@@ -297,3 +297,45 @@ Se completó satisfactoriamente la infraestructura de persistencia local en Room
   - Se verificó la réplica lógica y publicación `supabase_realtime`: las 20 tablas del proyecto (incluidas las nuevas tablas `gastos` y `plantillas_gastos`) cuentan con clave primaria definida y replicación activa.
   - El motor de base de datos PostgreSQL, la API PostgREST, el servicio Auth y el almacenamiento Storage operan con estado `Healthy`.
 
+---
+
+## 9. Refinamiento de Interfaz de Gastos, Pestaña de Plantillas y Unificación Visual
+
+### 9.1 Unificación de la Paleta de Color
+- Se corrigió la discrepancia visual donde la pantalla de gastos utilizaba un fondo `ApricotIllusion` no estándar.
+- Se homologó el contenedor principal al fondo general del tema (`VanillaCustard` `0xFFFAF3E0`), manteniendo las tarjetas de contenido con superficie blanca (`Color.White`), bordes suaves en `ApricotIllusion` y texto contrastado en `ChocolateFondant`.
+- Se corrigieron los fondos de diálogos modales (`ExpenseFormDialog`, `ExpenseTemplateFormDialog`, `AlertDialog` y `DatePickerDialog`) a `VanillaCustard` para alinearse con el patrón de diseño del resto de módulos (`CashRegisterScreen`, `EmployeesScreen`).
+
+### 9.2 División en Dos Pestañas: Gastos y Plantillas
+- Se implementó un selector de pestañas (`PrimaryTabRow`) en la cabecera de `ExpensesScreen`:
+  1. **Pestaña de Gastos:**
+     - Registro y auditoría oficial de los egresos diarios del negocio.
+     - Selector de fecha operativa con atajo a "Hoy" y diálogo de calendario.
+     - Resumen de egresos (total del día, efectivo de caja vs transferencias) y contraste en vivo de ganancia neta real frente a ventas cobradas.
+     - Filtros por categoría (`Todas`, `Insumos`, `Servicios`, `Mantenimiento`, `Desechables`, `Otro`).
+     - Lista de gastos registrados con edición, eliminación y estado offline.
+     - Botón flotante para registrar nuevos gastos.
+  2. **Pestaña de Plantillas:**
+     - Catálogo de insumos y elementos habituales adquiridos por el negocio (tortillas por kilo, rejas de refresco, cilindros de gas, carbón, desechables).
+     - Visualización de precio unitario pactado/base o indicación de precio variable/libre.
+     - Control para activar o desactivar plantillas del catálogo de selección rápida.
+     - Filtros por categoría y acciones de edición y eliminación.
+     - Botón flotante para crear nuevas plantillas.
+
+### 9.3 Formulario de Plantillas (`ExpenseTemplateFormDialog.kt`)
+- Permite capturar insumos frecuentes con:
+  - Nombre libre (ej. "Tortilla de comal", "Reja Coca-Cola 24 pzas").
+  - Categoría (`Insumos`, `Servicios`, `Mantenimiento`, `Desechables`, `Otro`).
+  - Unidad de medida (campo libre con sugerencias rápidas: `kg`, `pza`, `reja`, `costal`, `litro`, `servicio`).
+  - Precio unitario pactado / base en centavos MXN (con libertad de dejarlo en `$0.00` para compras de precio variable).
+  - Switch para definir si la plantilla está activa en el catálogo rápido.
+
+### 9.4 Registro Oficial de Gastos (`ExpenseFormDialog.kt`)
+- Opción destacada para elegir entre "Gasto libre / nuevo" o seleccionar cualquier plantilla frecuente predefinida.
+- Al seleccionar una plantilla, se autocompleta el concepto, categoría y precio unitario si está configurado.
+- Soporte dual de captura:
+  - **Por cantidad y precio unitario:** cálculo dinámico del total en tiempo real (ej. 10 kg x $24.00 = $240.00).
+  - **Monto total directo:** captura directa en pesos (ej. $290.00).
+- Método de pago (`Efectivo`, `Transferencia`, `Otro`) y notas o detalles adicionales.
+
+

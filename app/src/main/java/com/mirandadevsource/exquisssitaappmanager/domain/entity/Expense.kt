@@ -57,7 +57,10 @@ data class ExpenseTemplate(
     val createdAt: String = "",
     val updatedAt: String = "",
     val syncVersion: Long = 1L,
-)
+) {
+    val id: String
+        get() = remoteId ?: localId
+}
 
 /**
  * Resumen de rentabilidad diaria contrastando ventas brutas, egresos operativos y nómina pagada.

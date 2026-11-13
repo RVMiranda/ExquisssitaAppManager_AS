@@ -6,12 +6,15 @@ import com.mirandadevsource.exquisssitaappmanager.core.network.NetworkMonitor
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.AuthState
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.Expense
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.ExpensePaymentMethod
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.ExpenseTemplate
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.UserRole
 import com.mirandadevsource.exquisssitaappmanager.domain.repository.AuthRepository
+import com.mirandadevsource.exquisssitaappmanager.domain.usecases.expenses.DeleteExpenseTemplateUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.expenses.DeleteExpenseUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.expenses.GetDailyProfitSummaryUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.expenses.GetExpenseTemplatesUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.expenses.GetExpensesUseCase
+import com.mirandadevsource.exquisssitaappmanager.domain.usecases.expenses.SaveExpenseTemplateUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.expenses.SaveExpenseUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -30,6 +33,8 @@ class ExpensesViewModel @Inject constructor(
     private val saveExpenseUseCase: SaveExpenseUseCase,
     private val deleteExpenseUseCase: DeleteExpenseUseCase,
     private val getExpenseTemplatesUseCase: GetExpenseTemplatesUseCase,
+    private val saveExpenseTemplateUseCase: SaveExpenseTemplateUseCase,
+    private val deleteExpenseTemplateUseCase: DeleteExpenseTemplateUseCase,
     private val getDailyProfitSummaryUseCase: GetDailyProfitSummaryUseCase,
     private val authRepository: AuthRepository,
     private val networkMonitor: NetworkMonitor,
@@ -61,15 +66,26 @@ class ExpensesViewModel @Inject constructor(
             }
         }
 
-        // Observar plantillas de gastos reactivas
+        // Observar plantillas de gastos activas (para selección en formulario de gastos)
         viewModelScope.launch {
             getExpenseTemplatesUseCase.getFlow().collect { templates ->
                 _uiState.update { it.copy(templates = templates) }
             }
         }
 
+        // Observar catálogo completo de plantillas (activas e inactivas) para administración
+        viewModelScope.launch {
+            getExpenseTemplatesUseCase.getAllFlow().collect { allTemplates ->
+                _uiState.update { it.copy(allTemplates = allTemplates) }
+            }
+        }
+
         observeExpensesForDate(_uiState.value.selectedDate)
         refreshAll(_uiState.value.selectedDate, isInitial = true)
+    }
+
+    fun selectTab(tab: ExpenseViewTab) {
+        _uiState.update { it.copy(selectedTab = tab, errorMessage = null) }
     }
 
     private fun observeExpensesForDate(date: String) {
@@ -241,6 +257,130 @@ class ExpensesViewModel @Inject constructor(
                         isLoading = false,
                         errorMessage = err.message ?: "No se pudo eliminar el gasto.",
                     )
+                }
+            }
+        }
+    }
+
+    // --- Gestión de Plantillas de Gastos Frecuentes ---
+
+    fun setTemplateCategoryFilter(category: String?) {
+        _uiState.update { it.copy(selectedTemplateCategoryFilter = category) }
+    }
+
+    fun openCreateTemplateDialog() {
+        _uiState.update {
+            it.copy(
+                isTemplateDialogOpen = true,
+                editingTemplate = null,
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun openEditTemplateDialog(template: ExpenseTemplate) {
+        _uiState.update {
+            it.copy(
+                isTemplateDialogOpen = true,
+                editingTemplate = template,
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun closeTemplateDialog() {
+        _uiState.update {
+            it.copy(
+                isTemplateDialogOpen = false,
+                editingTemplate = null,
+            )
+        }
+    }
+
+    fun saveTemplate(
+        name: String,
+        category: String,
+        unitPriceCents: Long,
+        unitOfMeasure: String,
+        isActive: Boolean,
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSavingTemplate = true, errorMessage = null) }
+            val currentEdit = _uiState.value.editingTemplate
+
+            val result = saveExpenseTemplateUseCase(
+                id = currentEdit?.id,
+                name = name,
+                category = category,
+                unitPriceCents = unitPriceCents,
+                unitOfMeasure = unitOfMeasure,
+                isActive = isActive,
+            )
+
+            result.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        isSavingTemplate = false,
+                        isTemplateDialogOpen = false,
+                        editingTemplate = null,
+                        successMessage = if (currentEdit == null) "Plantilla creada correctamente." else "Plantilla actualizada.",
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isSavingTemplate = false,
+                        errorMessage = err.message ?: "Error al guardar la plantilla.",
+                    )
+                }
+            }
+        }
+    }
+
+    fun requestDeleteTemplate(template: ExpenseTemplate) {
+        _uiState.update { it.copy(templateToDelete = template) }
+    }
+
+    fun cancelDeleteTemplate() {
+        _uiState.update { it.copy(templateToDelete = null) }
+    }
+
+    fun confirmDeleteTemplate() {
+        val target = _uiState.value.templateToDelete ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(templateToDelete = null, isLoading = true) }
+            val result = deleteExpenseTemplateUseCase(target.id)
+            result.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        successMessage = "Plantilla eliminada.",
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = err.message ?: "No se pudo eliminar la plantilla.",
+                    )
+                }
+            }
+        }
+    }
+
+    fun toggleTemplateActive(template: ExpenseTemplate) {
+        viewModelScope.launch {
+            val newActive = !template.isActive
+            val result = deleteExpenseTemplateUseCase.toggleActive(template.id, newActive)
+            result.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        successMessage = if (newActive) "Plantilla activada en catálogo." else "Plantilla desactivada del catálogo.",
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(errorMessage = err.message ?: "Error al actualizar estado de la plantilla.")
                 }
             }
         }

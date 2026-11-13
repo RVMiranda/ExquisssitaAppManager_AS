@@ -38,9 +38,29 @@ interface ExpenseRepository {
     fun getTemplatesFlow(): Flow<List<ExpenseTemplate>>
 
     /**
+     * Emite reactivamente todas las plantillas (activas e inactivas) para administración.
+     */
+    fun getAllTemplatesFlow(): Flow<List<ExpenseTemplate>>
+
+    /**
      * Actualiza el catálogo local de plantillas desde el backend Supabase.
      */
     suspend fun refreshTemplates(): Result<List<ExpenseTemplate>>
+
+    /**
+     * Guarda o actualiza una plantilla de gasto.
+     */
+    suspend fun saveTemplate(template: ExpenseTemplate): Result<ExpenseTemplate>
+
+    /**
+     * Elimina una plantilla de gasto por su identificador.
+     */
+    suspend fun deleteTemplate(templateId: String): Result<Unit>
+
+    /**
+     * Alterna el estado activo/inactivo de una plantilla de gasto.
+     */
+    suspend fun toggleTemplateActive(templateId: String, active: Boolean): Result<Unit>
 
     /**
      * Obtiene el resumen de rentabilidad diaria (Ventas - Gastos - Nómina).

@@ -105,7 +105,11 @@ class SaveExpenseUseCaseTest {
         override suspend fun deleteExpense(localId: String): Result<Unit> = Result.success(Unit)
         override suspend fun syncPendingExpenses(): Result<Int> = Result.success(0)
         override fun getTemplatesFlow(): Flow<List<ExpenseTemplate>> = flowOf(emptyList())
+        override fun getAllTemplatesFlow(): Flow<List<ExpenseTemplate>> = flowOf(emptyList())
         override suspend fun refreshTemplates(): Result<List<ExpenseTemplate>> = Result.success(emptyList())
+        override suspend fun saveTemplate(template: ExpenseTemplate): Result<ExpenseTemplate> = Result.success(template)
+        override suspend fun deleteTemplate(templateId: String): Result<Unit> = Result.success(Unit)
+        override suspend fun toggleTemplateActive(templateId: String, active: Boolean): Result<Unit> = Result.success(Unit)
         override suspend fun getDailyProfitSummary(date: String): Result<DailyProfitSummary> =
             Result.failure(UnsupportedOperationException())
     }

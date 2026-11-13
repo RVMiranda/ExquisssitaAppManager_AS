@@ -64,6 +64,26 @@ data class ExpenseTemplateDto(
 )
 
 @Serializable
+data class CreateExpenseTemplateRequestDto(
+    val id: String,
+    val nombre: String,
+    val categoria: String,
+    @SerialName("precio_unitario") val precioUnitario: Long,
+    @SerialName("unidad_medida") val unidadMedida: String,
+    val activo: Boolean = true,
+)
+
+@Serializable
+data class UpdateExpenseTemplateRequestDto(
+    val nombre: String,
+    val categoria: String,
+    @SerialName("precio_unitario") val precioUnitario: Long,
+    @SerialName("unidad_medida") val unidadMedida: String,
+    val activo: Boolean,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+@Serializable
 data class DailyProfitSummaryDto(
     @SerialName("fecha") val fecha: String,
     @SerialName("ventas_totales_centavos") val ventasTotalesCentavos: Long = 0L,

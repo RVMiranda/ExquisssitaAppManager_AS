@@ -15,6 +15,9 @@ interface ExpenseTemplateDao {
     @Query("SELECT * FROM expense_template_cache WHERE cacheActorUserId = :actorUserId AND activo = 1 ORDER BY nombre COLLATE NOCASE")
     fun getActiveTemplatesFlow(actorUserId: String): Flow<List<ExpenseTemplateEntity>>
 
+    @Query("SELECT * FROM expense_template_cache WHERE cacheActorUserId = :actorUserId ORDER BY activo DESC, nombre COLLATE NOCASE")
+    fun getAllTemplatesFlow(actorUserId: String): Flow<List<ExpenseTemplateEntity>>
+
     @Query("SELECT * FROM expense_template_cache WHERE localId = :id LIMIT 1")
     suspend fun getByLocalId(id: String): ExpenseTemplateEntity?
 
@@ -30,6 +33,6 @@ interface ExpenseTemplateDao {
     @Query("DELETE FROM expense_template_cache WHERE cacheActorUserId = :actorUserId AND syncState = 'SYNCED' AND remoteId NOT IN (:remoteIds)")
     suspend fun deleteSyncedNotIn(actorUserId: String, remoteIds: List<String>)
 
-    @Query("DELETE FROM expense_template_cache WHERE localId = :localId")
+    @Query("DELETE FROM expense_template_cache WHERE localId = :localId OR remoteId = :localId")
     suspend fun deleteByLocalId(localId: String)
 }

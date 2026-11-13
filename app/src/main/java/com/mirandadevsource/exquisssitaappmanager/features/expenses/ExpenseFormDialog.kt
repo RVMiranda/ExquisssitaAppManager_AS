@@ -54,6 +54,7 @@ import com.mirandadevsource.exquisssitaappmanager.domain.entity.ExpenseTemplate
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ApricotIllusion
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.BrandyBrown
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ChocolateFondant
+import com.mirandadevsource.exquisssitaappmanager.ui.theme.VanillaCustard
 import java.math.BigDecimal
 import java.math.RoundingMode
 import kotlin.math.roundToLong
@@ -114,12 +115,12 @@ fun ExpenseFormDialog(
         }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = { if (!isSaving) onDismiss() }) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = ApricotIllusion,
+            shape = RoundedCornerShape(12.dp),
+            color = VanillaCustard,
             tonalElevation = 6.dp,
-            border = BorderStroke(1.dp, BrandyBrown.copy(alpha = 0.2f)),
+            border = BorderStroke(1.dp, ApricotIllusion),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 16.dp),
@@ -140,79 +141,107 @@ fun ExpenseFormDialog(
                             text = if (initialExpense == null) "Registrar Gasto" else "Editar Gasto",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = ChocolateFondant,
+                            color = BrandyBrown,
                         )
                         Text(
                             text = "Egreso operativo del día",
                             style = MaterialTheme.typography.bodySmall,
-                            color = BrandyBrown,
+                            color = ChocolateFondant.copy(alpha = 0.7f),
                         )
                     }
                     IconButton(onClick = onDismiss, enabled = !isSaving) {
                         Icon(
                             imageVector = Icons.Outlined.Close,
                             contentDescription = "Cerrar",
-                            tint = BrandyBrown,
+                            tint = ChocolateFondant,
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Plantillas rápidas de insumos frecuentes
-                if (templates.isNotEmpty()) {
-                    Text(
-                        text = "Gastos frecuentes / Plantillas:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = ChocolateFondant,
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        templates.forEach { tmpl ->
-                            val isSelected = selectedTemplateId == tmpl.localId
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = {
-                                    selectedTemplateId = tmpl.localId
-                                    concept = tmpl.name
-                                    category = tmpl.category
-                                    if (tmpl.unitPriceCents > 0L) {
-                                        isUnitCalculationMode = true
-                                        unitPriceText = (tmpl.unitPriceCents / 100.0).toString()
-                                    }
-                                },
-                                label = {
-                                    val priceHint = if (tmpl.unitPriceCents > 0L) {
-                                        " (${CurrencyFormatter.formatCents(tmpl.unitPriceCents)}/${tmpl.unitOfMeasure})"
-                                    } else ""
-                                    Text(
-                                        text = "${tmpl.name}$priceHint",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = BrandyBrown,
-                                    selectedLabelColor = Color.White,
-                                    containerColor = Color.White,
-                                    labelColor = ChocolateFondant,
-                                ),
-                                border = FilterChipDefaults.filterChipBorder(
-                                    enabled = true,
-                                    selected = isSelected,
-                                    borderColor = BrandyBrown.copy(alpha = 0.3f),
-                                    selectedBorderColor = BrandyBrown,
-                                ),
+                // Selector de Plantilla o Gasto Libre
+                Text(
+                    text = "Plantilla frecuente o concepto libre:",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ChocolateFondant,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Chip para Gasto Libre / Nuevo
+                    val isCustomSelected = selectedTemplateId == null
+                    FilterChip(
+                        selected = isCustomSelected,
+                        onClick = {
+                            selectedTemplateId = null
+                        },
+                        label = {
+                            Text(
+                                text = "Gasto libre / nuevo",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (isCustomSelected) FontWeight.Bold else FontWeight.Normal,
                             )
-                        }
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = BrandyBrown,
+                            selectedLabelColor = Color.White,
+                            containerColor = Color.White,
+                            labelColor = ChocolateFondant,
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = isCustomSelected,
+                            borderColor = ApricotIllusion,
+                            selectedBorderColor = BrandyBrown,
+                        ),
+                    )
+
+                    // Chips de plantillas frecuentes
+                    templates.forEach { tmpl ->
+                        val isSelected = selectedTemplateId == tmpl.id || selectedTemplateId == tmpl.localId
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                selectedTemplateId = tmpl.id.ifBlank { tmpl.localId }
+                                concept = tmpl.name
+                                category = tmpl.category
+                                if (tmpl.unitPriceCents > 0L) {
+                                    isUnitCalculationMode = true
+                                    unitPriceText = (tmpl.unitPriceCents / 100.0).toString()
+                                }
+                            },
+                            label = {
+                                val priceHint = if (tmpl.unitPriceCents > 0L) {
+                                    " (${CurrencyFormatter.formatCents(tmpl.unitPriceCents)}/${tmpl.unitOfMeasure})"
+                                } else ""
+                                Text(
+                                    text = "${tmpl.name}$priceHint",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = BrandyBrown,
+                                selectedLabelColor = Color.White,
+                                containerColor = Color.White,
+                                labelColor = ChocolateFondant,
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isSelected,
+                                borderColor = ApricotIllusion,
+                                selectedBorderColor = BrandyBrown,
+                            ),
+                        )
                     }
-                    Spacer(modifier = Modifier.height(14.dp))
                 }
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Campo Concepto
                 OutlinedTextField(
@@ -226,13 +255,7 @@ fun ExpenseFormDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BrandyBrown,
-                        unfocusedBorderColor = BrandyBrown.copy(alpha = 0.4f),
-                        focusedLabelColor = BrandyBrown,
-                        unfocusedContainerColor = Color.White,
-                        focusedContainerColor = Color.White,
-                    ),
+                    colors = expenseDialogTextFieldColors(),
                     shape = RoundedCornerShape(8.dp),
                 )
 
@@ -319,13 +342,7 @@ fun ExpenseFormDialog(
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = BrandyBrown,
-                                unfocusedBorderColor = BrandyBrown.copy(alpha = 0.4f),
-                                focusedLabelColor = BrandyBrown,
-                                unfocusedContainerColor = Color.White,
-                                focusedContainerColor = Color.White,
-                            ),
+                            colors = expenseDialogTextFieldColors(),
                             shape = RoundedCornerShape(8.dp),
                         )
 
@@ -340,13 +357,7 @@ fun ExpenseFormDialog(
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = BrandyBrown,
-                                unfocusedBorderColor = BrandyBrown.copy(alpha = 0.4f),
-                                focusedLabelColor = BrandyBrown,
-                                unfocusedContainerColor = Color.White,
-                                focusedContainerColor = Color.White,
-                            ),
+                            colors = expenseDialogTextFieldColors(),
                             shape = RoundedCornerShape(8.dp),
                         )
                     }
@@ -363,13 +374,7 @@ fun ExpenseFormDialog(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BrandyBrown,
-                            unfocusedBorderColor = BrandyBrown.copy(alpha = 0.4f),
-                            focusedLabelColor = BrandyBrown,
-                            unfocusedContainerColor = Color.White,
-                            focusedContainerColor = Color.White,
-                        ),
+                        colors = expenseDialogTextFieldColors(),
                         shape = RoundedCornerShape(8.dp),
                     )
                 }
@@ -445,13 +450,7 @@ fun ExpenseFormDialog(
                     modifier = Modifier.fillMaxWidth(),
                     maxLines = 2,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BrandyBrown,
-                        unfocusedBorderColor = BrandyBrown.copy(alpha = 0.4f),
-                        focusedLabelColor = BrandyBrown,
-                        unfocusedContainerColor = Color.White,
-                        focusedContainerColor = Color.White,
-                    ),
+                    colors = expenseDialogTextFieldColors(),
                     shape = RoundedCornerShape(8.dp),
                 )
 

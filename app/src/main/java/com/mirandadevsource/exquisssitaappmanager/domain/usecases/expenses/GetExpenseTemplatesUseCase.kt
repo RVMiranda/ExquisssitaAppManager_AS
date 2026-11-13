@@ -10,5 +10,7 @@ class GetExpenseTemplatesUseCase @Inject constructor(
 ) {
     fun getFlow(): Flow<List<ExpenseTemplate>> = repository.getTemplatesFlow()
 
+    fun getAllFlow(): Flow<List<ExpenseTemplate>> = repository.getAllTemplatesFlow()
+
     suspend fun refresh(): Result<List<ExpenseTemplate>> = repository.refreshTemplates()
 }
