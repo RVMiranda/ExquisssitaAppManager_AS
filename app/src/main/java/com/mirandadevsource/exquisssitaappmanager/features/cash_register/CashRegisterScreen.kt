@@ -732,7 +732,38 @@ private fun DaySummaryCard(
             }
 
             // Sección de Contraste de Rentabilidad (Ventas vs Gastos y Nómina)
-            if (profitSummary != null) {
+            val effectiveProfit = if (profitSummary != null) {
+                val finalSales = maxOf(profitSummary.totalSalesCents, totalCents)
+                val finalCash = maxOf(profitSummary.cashSalesCents, cashCents)
+                val finalOutflows = profitSummary.totalExpensesCents + profitSummary.totalPayrollCents
+                profitSummary.copy(
+                    totalSalesCents = finalSales,
+                    cashSalesCents = finalCash,
+                    totalOutflowsCents = finalOutflows,
+                    netProfitCents = finalSales - finalOutflows,
+                    expectedCashInDrawerCents = finalCash - profitSummary.cashExpensesCents - profitSummary.totalPayrollCents,
+                )
+            } else if (totalCents > 0L) {
+                DailyProfitSummary(
+                    date = selectedDate,
+                    totalSalesCents = totalCents,
+                    cashSalesCents = cashCents,
+                    cardSalesCents = cardCents,
+                    otherSalesCents = otherCents,
+                    closedOrdersCount = ordersCount,
+                    totalExpensesCents = 0L,
+                    cashExpensesCents = 0L,
+                    otherExpensesCents = 0L,
+                    registeredExpensesCount = 0,
+                    totalPayrollCents = 0L,
+                    payrollPaymentsCount = 0,
+                    totalOutflowsCents = 0L,
+                    netProfitCents = totalCents,
+                    expectedCashInDrawerCents = cashCents,
+                )
+            } else null
+
+            if (effectiveProfit != null) {
                 Spacer(modifier = Modifier.height(14.dp))
                 HorizontalDivider(color = ApricotIllusion)
                 Spacer(modifier = Modifier.height(12.dp))
@@ -774,7 +805,7 @@ private fun DaySummaryCard(
                         color = ChocolateFondant,
                     )
                     Text(
-                        text = formatCentsToPesos(profitSummary.totalSalesCents),
+                        text = formatCentsToPesos(effectiveProfit.totalSalesCents),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF2E7D32),
@@ -793,14 +824,14 @@ private fun DaySummaryCard(
                         color = ChocolateFondant,
                     )
                     Text(
-                        text = "- ${formatCentsToPesos(profitSummary.totalExpensesCents)}",
+                        text = "- ${formatCentsToPesos(effectiveProfit.totalExpensesCents)}",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFFC62828),
                     )
                 }
 
-                if (profitSummary.totalPayrollCents > 0L) {
+                if (effectiveProfit.totalPayrollCents > 0L) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -812,7 +843,7 @@ private fun DaySummaryCard(
                             color = ChocolateFondant,
                         )
                         Text(
-                            text = "- ${formatCentsToPesos(profitSummary.totalPayrollCents)}",
+                            text = "- ${formatCentsToPesos(effectiveProfit.totalPayrollCents)}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = Color(0xFFC62828),
@@ -825,10 +856,10 @@ private fun DaySummaryCard(
                 // Tarjeta de Ganancia Neta Real
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = if (profitSummary.netProfitCents >= 0L) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                    color = if (effectiveProfit.netProfitCents >= 0L) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
                     border = BorderStroke(
                         1.dp,
-                        if (profitSummary.netProfitCents >= 0L) Color(0xFF81C784) else Color(0xFFE57373),
+                        if (effectiveProfit.netProfitCents >= 0L) Color(0xFF81C784) else Color(0xFFE57373),
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -844,20 +875,20 @@ private fun DaySummaryCard(
                                 text = "Ganancia Neta Real",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = if (profitSummary.netProfitCents >= 0L) Color(0xFF1B5E20) else Color(0xFFB71C1C),
+                                color = if (effectiveProfit.netProfitCents >= 0L) Color(0xFF1B5E20) else Color(0xFFB71C1C),
                             )
                             Text(
-                                text = "Efectivo esperado en caja: ${formatCentsToPesos(profitSummary.expectedCashInDrawerCents)}",
+                                text = "Efectivo esperado en caja: ${formatCentsToPesos(effectiveProfit.expectedCashInDrawerCents)}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = ChocolateFondant.copy(alpha = 0.7f),
                             )
                         }
 
                         Text(
-                            text = formatCentsToPesos(profitSummary.netProfitCents),
+                            text = formatCentsToPesos(effectiveProfit.netProfitCents),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.ExtraBold,
-                            color = if (profitSummary.netProfitCents >= 0L) Color(0xFF2E7D32) else Color(0xFFC62828),
+                            color = if (effectiveProfit.netProfitCents >= 0L) Color(0xFF2E7D32) else Color(0xFFC62828),
                         )
                     }
                 }

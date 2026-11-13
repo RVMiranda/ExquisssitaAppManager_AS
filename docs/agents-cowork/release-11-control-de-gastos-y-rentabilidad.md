@@ -338,4 +338,29 @@ Se completó satisfactoriamente la infraestructura de persistencia local en Room
   - **Monto total directo:** captura directa en pesos (ej. $290.00).
 - Método de pago (`Efectivo`, `Transferencia`, `Otro`) y notas o detalles adicionales.
 
+---
+
+## 10. Corrección y Consolidación del Contraste de Rentabilidad (Ventas vs Gastos y Nómina)
+
+### 10.1 Causa Raíz de la Ausencia de Datos en Contraste
+1. **Desalineación de llaves JSON en RPC vs DTO:** La función SQL `obtener_resumen_rentabilidad_diaria` retornaba las llaves `ventas_totales`, `gastos_totales`, `egresos_totales`, etc., mientras que el DTO `DailyProfitSummaryDto` esperaba `ventas_totales_centavos`, `gastos_totales_centavos`. Esto causaba que la deserialización fallara o asignara ceros.
+2. **Cálculo de Ventas en Backend:** La versión original de la función solo agregaba `transacciones`, pero en el flujo operativo del negocio los cortes de caja (`cortes_caja`) consolidan turnos y pedidos cerrados. Si no había transacciones sueltas en la fecha pero sí cortes realizados, las ventas aparecían en 0.
+3. **Manejo de Errores en Repositorio:** Si la llamada remota fallaba, el repositorio retornaba error en lugar de calcular automáticamente la rentabilidad a partir de los datos locales cacheados en Room (`dailyClosureDao` y `expenseDao`).
+
+### 10.2 Soluciones Implementadas
+1. **Migración `20261112220000_upgrade_profit_contrast_rpc.sql`:**
+   - Desplegada a producción en Supabase.
+   - Consolida ventas tomando el mayor valor entre `transacciones`, `cortes_caja` y `ordenes` cerradas de la fecha comercial.
+   - Retorna ambas convenciones de llaves JSON (`ventas_totales` y `ventas_totales_centavos`, etc.) garantizando 100% de compatibilidad.
+   - Permisos de ejecución ratificados para `authenticated`, `service_role` y `postgres`.
+2. **DTO Resiliente (`DailyProfitSummaryDto.kt` y `ExpenseMappers.kt`):**
+   - Resolución dual de llaves (`resolvedVentasTotales`, `resolvedGastosTotales`, etc.).
+3. **Fusión Híbrida en Repositorio (`ExpenseRepositoryImpl.kt`):**
+   - Combina los datos del backend con la caché local de Room para asegurar que cualquier corte o gasto reciente se refleje de inmediato.
+   - En caso de fallo de red o error del servidor, conmuta de forma transparente al cálculo local en Room sin retornar nulo.
+4. **Presentación Visual Garantizada en `CashRegisterScreen.kt` y `ExpensesScreen.kt`:**
+   - En `CashRegisterScreen`, la sección "Contraste de Rentabilidad del Día" utiliza `effectiveProfit`, mostrándose siempre que existan ventas en el corte o gastos operativos del día, calculando la ganancia neta real y el efectivo esperado en caja.
+   - En `ExpensesScreen`, el badge de ganancia neta o balance del día se muestra si existen ventas o egresos registrados.
+
+
 

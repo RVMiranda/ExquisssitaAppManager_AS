@@ -475,28 +475,61 @@ class ExpenseRepositoryImpl @Inject constructor(
             ?: return Result.failure(SecurityException("Se requiere una sesión activa para consultar rentabilidad."))
         val actor = session.userId
 
+        var remoteSummary: DailyProfitSummary? = null
         if (canUseRemote(session)) {
             try {
-                val remoteSummary = supabase.postgrest.rpc(
+                val remoteDto = supabase.postgrest.rpc(
                     PROFIT_SUMMARY_RPC,
                     DailyProfitRpcParams(fecha = date),
                 ).decodeAs<DailyProfitSummaryDto>()
-                return Result.success(remoteSummary.toDomain())
+                remoteSummary = remoteDto.toDomain()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (failure: Exception) {
-                if (!failure.isNetworkFailure()) {
-                    return Result.failure(failure)
-                }
+            } catch (_: Exception) {
+                // Si la RPC remota falla por red o permisos, se continúa con el cálculo local
             }
         }
 
-        // Respaldo de cálculo local offline usando agregaciones en Room
+        // Respaldo y consolidación local usando agregaciones en Room
         return try {
             val salesSummary = dailyClosureDao.getDaySummary(date)
             val totalExpensesCents = expenseDao.getTotalExpensesCentsForDate(actor, date)
             val cashExpensesCents = expenseDao.getExpensesCentsByPaymentMethod(actor, date, "Efectivo")
             val otherExpensesCents = totalExpensesCents - cashExpensesCents
+
+            if (remoteSummary != null) {
+                // Consolidar: Si localmente hay cortes de caja o gastos más recientes, asegurar que se reflejen
+                val consolidatedSalesTotal = maxOf(remoteSummary.totalSalesCents, salesSummary?.totalCents ?: 0L)
+                val consolidatedSalesCash = maxOf(remoteSummary.cashSalesCents, salesSummary?.cashCents ?: 0L)
+                val consolidatedSalesCard = maxOf(remoteSummary.cardSalesCents, salesSummary?.cardCents ?: 0L)
+                val consolidatedSalesOther = maxOf(remoteSummary.otherSalesCents, salesSummary?.otherCents ?: 0L)
+                val consolidatedOrdersCount = maxOf(remoteSummary.closedOrdersCount, salesSummary?.closedOrderCount ?: 0)
+
+                val consolidatedExpensesTotal = maxOf(remoteSummary.totalExpensesCents, totalExpensesCents)
+                val consolidatedExpensesCash = maxOf(remoteSummary.cashExpensesCents, cashExpensesCents)
+                val consolidatedExpensesOther = maxOf(remoteSummary.otherExpensesCents, otherExpensesCents)
+                val consolidatedPayroll = remoteSummary.totalPayrollCents
+
+                val consolidatedOutflows = consolidatedExpensesTotal + consolidatedPayroll
+                val consolidatedNetProfit = consolidatedSalesTotal - consolidatedOutflows
+                val consolidatedCashExpected = consolidatedSalesCash - consolidatedExpensesCash - consolidatedPayroll
+
+                return Result.success(
+                    remoteSummary.copy(
+                        totalSalesCents = consolidatedSalesTotal,
+                        cashSalesCents = consolidatedSalesCash,
+                        cardSalesCents = consolidatedSalesCard,
+                        otherSalesCents = consolidatedSalesOther,
+                        closedOrdersCount = consolidatedOrdersCount,
+                        totalExpensesCents = consolidatedExpensesTotal,
+                        cashExpensesCents = consolidatedExpensesCash,
+                        otherExpensesCents = consolidatedExpensesOther,
+                        totalOutflowsCents = consolidatedOutflows,
+                        netProfitCents = consolidatedNetProfit,
+                        expectedCashInDrawerCents = consolidatedCashExpected,
+                    )
+                )
+            }
 
             val totalSalesCents = salesSummary?.totalCents ?: 0L
             val cashSalesCents = salesSummary?.cashCents ?: 0L

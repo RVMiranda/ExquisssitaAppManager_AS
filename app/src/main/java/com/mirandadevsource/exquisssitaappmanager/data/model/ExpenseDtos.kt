@@ -85,22 +85,54 @@ data class UpdateExpenseTemplateRequestDto(
 
 @Serializable
 data class DailyProfitSummaryDto(
-    @SerialName("fecha") val fecha: String,
-    @SerialName("ventas_totales_centavos") val ventasTotalesCentavos: Long = 0L,
-    @SerialName("ventas_efectivo_centavos") val ventasEfectivoCentavos: Long = 0L,
-    @SerialName("ventas_tarjeta_centavos") val ventasTarjetaCentavos: Long = 0L,
-    @SerialName("ventas_otro_centavos") val ventasOtroCentavos: Long = 0L,
+    @SerialName("fecha") val fecha: String = "",
+    @SerialName("ventas_totales") val ventasTotales: Long = 0L,
+    @SerialName("ventas_efectivo") val ventasEfectivo: Long = 0L,
+    @SerialName("ventas_tarjeta") val ventasTarjeta: Long = 0L,
+    @SerialName("ventas_otro") val ventasOtro: Long = 0L,
     @SerialName("num_ordenes_cobradas") val numOrdenesCobradas: Int = 0,
-    @SerialName("gastos_totales_centavos") val gastosTotalesCentavos: Long = 0L,
-    @SerialName("gastos_efectivo_centavos") val gastosEfectivoCentavos: Long = 0L,
-    @SerialName("gastos_otros_metodos_centavos") val gastosOtrosMetodosCentavos: Long = 0L,
+    @SerialName("gastos_totales") val gastosTotales: Long = 0L,
+    @SerialName("gastos_efectivo") val gastosEfectivo: Long = 0L,
+    @SerialName("gastos_otros_metodos") val gastosOtrosMetodos: Long = 0L,
     @SerialName("num_gastos_registrados") val numGastosRegistrados: Int = 0,
-    @SerialName("nomina_total_centavos") val nominaTotalCentavos: Long = 0L,
+    @SerialName("nomina_total") val nominaTotal: Long = 0L,
     @SerialName("num_pagos_nomina") val numPagosNomina: Int = 0,
-    @SerialName("egresos_totales_centavos") val egresosTotalesCentavos: Long = 0L,
-    @SerialName("ganancia_neta_centavos") val gananciaNetaCentavos: Long = 0L,
-    @SerialName("efectivo_en_caja_esperado_centavos") val efectivoEnCajaEsperadoCentavos: Long = 0L,
-)
+    @SerialName("egresos_totales") val egresosTotales: Long = 0L,
+    @SerialName("ganancia_neta") val gananciaNeta: Long = 0L,
+    @SerialName("efectivo_en_caja_esperado") val efectivoEnCajaEsperado: Long = 0L,
+    @SerialName("ventas_totales_centavos") val ventasTotalesCentavosAlt: Long = 0L,
+    @SerialName("ventas_efectivo_centavos") val ventasEfectivoCentavosAlt: Long = 0L,
+    @SerialName("gastos_totales_centavos") val gastosTotalesCentavosAlt: Long = 0L,
+    @SerialName("gastos_efectivo_centavos") val gastosEfectivoCentavosAlt: Long = 0L,
+    @SerialName("nomina_total_centavos") val nominaTotalCentavosAlt: Long = 0L,
+    @SerialName("egresos_totales_centavos") val egresosTotalesCentavosAlt: Long = 0L,
+    @SerialName("ganancia_neta_centavos") val gananciaNetaCentavosAlt: Long = 0L,
+    @SerialName("efectivo_en_caja_esperado_centavos") val efectivoEnCajaEsperadoCentavosAlt: Long = 0L,
+) {
+    val resolvedVentasTotales: Long
+        get() = if (ventasTotales != 0L) ventasTotales else ventasTotalesCentavosAlt
+
+    val resolvedVentasEfectivo: Long
+        get() = if (ventasEfectivo != 0L) ventasEfectivo else ventasEfectivoCentavosAlt
+
+    val resolvedGastosTotales: Long
+        get() = if (gastosTotales != 0L) gastosTotales else gastosTotalesCentavosAlt
+
+    val resolvedGastosEfectivo: Long
+        get() = if (gastosEfectivo != 0L) gastosEfectivo else gastosEfectivoCentavosAlt
+
+    val resolvedNominaTotal: Long
+        get() = if (nominaTotal != 0L) nominaTotal else nominaTotalCentavosAlt
+
+    val resolvedEgresosTotales: Long
+        get() = if (egresosTotales != 0L) egresosTotales else (resolvedGastosTotales + resolvedNominaTotal)
+
+    val resolvedGananciaNeta: Long
+        get() = if (gananciaNeta != 0L) gananciaNeta else (resolvedVentasTotales - resolvedEgresosTotales)
+
+    val resolvedEfectivoCajaEsperado: Long
+        get() = if (efectivoEnCajaEsperado != 0L) efectivoEnCajaEsperado else (resolvedVentasEfectivo - resolvedGastosEfectivo - resolvedNominaTotal)
+}
 
 @Serializable
 data class DailyProfitRpcParams(

@@ -1029,8 +1029,8 @@ private fun ExpensesSummarySection(
                     )
                 }
 
-                // Badge de Ganancia Neta Real si hay ventas registradas
-                if (netProfitCents != null && (totalSalesCents ?: 0L) > 0L) {
+                // Badge de Ganancia Neta Real o Balance del Día
+                if (netProfitCents != null && ((totalSalesCents ?: 0L) > 0L || totalExpensesCents > 0L)) {
                     val isPositive = netProfitCents >= 0L
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -1050,7 +1050,7 @@ private fun ExpensesSummarySection(
                             Spacer(modifier = Modifier.width(4.dp))
                             Column {
                                 Text(
-                                    text = if (isPositive) "Ganancia Neta" else "Pérdida",
+                                    text = if ((totalSalesCents ?: 0L) == 0L) "Egresos sin venta" else if (isPositive) "Ganancia Neta" else "Pérdida",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (isPositive) Color(0xFF2E7D32) else Color(0xFFC62828),
                                     fontWeight = FontWeight.SemiBold,
