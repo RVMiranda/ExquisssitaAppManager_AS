@@ -3,7 +3,7 @@
 **Proyecto:** Exquisssita Manager (`ExquisssitaAppManager`)  
 **Fecha:** 2026-11-12  
 **Predecesores:** Release 03 (Seguridad y Roles), Release 04 (Datos y Sincronización), Release 09 (Corte de Caja y Cierres Diarios), Release 10 (Recompensas).  
-**Estado:** FASE 1 Y FASE 2 COMPLETADAS (Backend Supabase y Capa Local Room SQLite v11); FASES 3–5 LISTAS PARA IMPLEMENTACIÓN.  
+**Estado:** FASE 1, FASE 2 Y FASE 3 COMPLETADAS (Backend Supabase, Room SQLite v11, Modelos, Repositorio Offline-First y Casos de Uso); FASES 4–5 LISTAS PARA IMPLEMENTACIÓN.  
 
 ---
 
@@ -177,3 +177,45 @@ Se completó satisfactoriamente la infraestructura de persistencia local en Room
 - Validación:
   - Compilación exitosa de fuentes debug (`compileDebugSources`) con Gradle y KSP Room.
   - Generación automática del archivo de verificación de esquema `app/schemas/com.mirandadevsource.exquisssitaappmanager.core.database.AppDatabase/11.json`.
+
+---
+
+## 6. Bitácora de Implementación — Fase 3: Modelos, Repositorio Offline-First y Dominio
+
+### 6.1 Modelos de Dominio y DTOs
+- `domain/entity/Expense.kt`:
+  - `Expense`: Modelo inmutable con montos en centavos enteros MXN (`amountCents: Long`), soporte opcional de `quantity` (`Double`) y `unitPriceCents` (`Long`), enum de método de pago (`ExpensePaymentMethod`: `EFECTIVO`, `TRANSFERENCIA`, `OTRO`), y categorías estándar (`Insumos`, `Servicios`, `Mantenimiento`, `Desechables`, `Otro`).
+  - `ExpenseTemplate`: Plantilla o catálogo de gastos frecuentes con precio sugerido.
+  - `DailyProfitSummary`: Agregado que contrasta ventas totales contra egresos operativos y nómina pagada.
+- `data/model/ExpenseDtos.kt`:
+  - `ExpenseDto`, `CreateExpenseRequestDto`, `UpdateExpenseRequestDto`, `ExpenseTemplateDto`, `DailyProfitSummaryDto`, `DailyProfitRpcParams`.
+- `data/mappers/ExpenseMappers.kt`:
+  - Funciones de mapeo bidireccionales entre entidades Room, DTOs de PostgREST y entidades de dominio.
+
+### 6.2 Repositorio de Gastos (`ExpenseRepositoryImpl`)
+- `domain/repository/ExpenseRepository.kt`:
+  - `getExpensesFlow(date)`: Emisión reactiva local `Flow<List<Expense>>` filtrada por actor y día operativo.
+  - `refreshExpenses(date)`: Sincronización remota desde `gastos` en Supabase con reconciliación de caché (`deleteSyncedNotIn`).
+  - `saveExpense(expense)`: Soporte dual (inserción remota si hay conectividad activa; persistencia local con `PENDING_INSERT`/`PENDING_UPDATE` en caso de modo offline).
+  - `deleteExpense(localId)`: Eliminación remota directa o marcado local `PENDING_DELETE`.
+  - `syncPendingExpenses()`: Proceso de vaciado hacia Supabase al reestablecerse la red.
+  - `getTemplatesFlow()` y `refreshTemplates()`: Catálogo de plantillas frecuentes.
+  - `getDailyProfitSummary(date)`: Invocación remota del RPC `obtener_resumen_rentabilidad_diaria(p_fecha)` con fallback offline automático calculado desde las tablas locales de `Room` (`dailyClosureDao` y `expenseDao`).
+
+### 6.3 Casos de Uso de Dominio e Inyección de Dependencias
+- `domain/usecases/expenses/`:
+  - `GetExpensesUseCase.kt`
+  - `SaveExpenseUseCase.kt` (valida concepto no vacío, monto > 0 o cálculo automático cantidad x precio unitario)
+  - `DeleteExpenseUseCase.kt`
+  - `GetExpenseTemplatesUseCase.kt`
+  - `GetDailyProfitSummaryUseCase.kt`
+- `core/di/ExpensesModule.kt`:
+  - Módulo Hilt `@InstallIn(SingletonComponent::class)` que vincula `ExpenseRepositoryImpl` con `ExpenseRepository`.
+
+### 6.4 Pruebas Unitarias
+- `app/src/test/java/com/mirandadevsource/exquisssitaappmanager/domain/usecases/expenses/SaveExpenseUseCaseTest.kt`:
+  - Prueba de rechazo de concepto vacío.
+  - Prueba de rechazo de monto no positivo sin cantidad ni precio unitario.
+  - Prueba de cálculo derivado de monto total a partir de cantidad (10 kg) y precio unitario ($24.00/kg) resultando en $240.00.
+  - Prueba de registro manual válido con limpieza de espacios en blanco.
+- Ejecución completa de suite de pruebas unitarias (`testDebugUnitTest`): 100% exitosa sin fallos ni regresiones.
