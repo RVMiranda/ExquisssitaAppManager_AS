@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PointOfSale
 import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.TableRestaurant
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.AlertDialog
@@ -77,6 +78,8 @@ import com.mirandadevsource.exquisssitaappmanager.features.dashboard.DashboardSc
 import com.mirandadevsource.exquisssitaappmanager.features.dashboard.DashboardViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.employees.EmployeesScreen
 import com.mirandadevsource.exquisssitaappmanager.features.employees.EmployeesViewModel
+import com.mirandadevsource.exquisssitaappmanager.features.expenses.ExpensesScreen
+import com.mirandadevsource.exquisssitaappmanager.features.expenses.ExpensesViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.cash_register.CashRegisterScreen
 import com.mirandadevsource.exquisssitaappmanager.features.cash_register.CashRegisterViewModel
 import com.mirandadevsource.exquisssitaappmanager.features.inventory.InventoryScreen
@@ -115,6 +118,7 @@ enum class MainNavDestination(
     PAYROLL("Nómina Semanal", Icons.Outlined.Payments, requiresManagerAccess = true),
     TABLES("Mesas y Salón", Icons.Outlined.TableRestaurant),
     ORDERS("Órdenes y Comandas", Icons.AutoMirrored.Outlined.ReceiptLong),
+    EXPENSES("Control de Gastos", Icons.Outlined.Receipt, requiresManagerAccess = true),
     CASH_REGISTER("Corte de Caja", Icons.Outlined.PointOfSale, requiresManagerAccess = true),
 }
 
@@ -152,8 +156,9 @@ private val DrawerNavGroups = listOf(
         ),
     ),
     DrawerNavGroup(
-        title = null,
+        title = "Finanzas",
         destinations = listOf(
+            MainNavDestination.EXPENSES,
             MainNavDestination.CASH_REGISTER,
         ),
     ),
@@ -592,12 +597,22 @@ fun MainScaffold(
                             },
                         )
                     }
+                    MainNavDestination.EXPENSES -> {
+                        val expensesViewModel: ExpensesViewModel = hiltViewModel()
+                        ExpensesScreen(
+                            viewModel = expensesViewModel,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     MainNavDestination.CASH_REGISTER -> {
                         val cashRegisterViewModel: CashRegisterViewModel = hiltViewModel()
                         CashRegisterScreen(
                             viewModel = cashRegisterViewModel,
                             onNavigateToOrders = {
                                 currentDestination = MainNavDestination.ORDERS
+                            },
+                            onNavigateToExpenses = {
+                                currentDestination = MainNavDestination.EXPENSES
                             },
                         )
                     }

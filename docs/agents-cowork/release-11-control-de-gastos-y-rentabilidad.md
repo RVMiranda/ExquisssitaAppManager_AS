@@ -3,7 +3,7 @@
 **Proyecto:** Exquisssita Manager (`ExquisssitaAppManager`)  
 **Fecha:** 2026-11-12  
 **Predecesores:** Release 03 (Seguridad y Roles), Release 04 (Datos y Sincronización), Release 09 (Corte de Caja y Cierres Diarios), Release 10 (Recompensas).  
-**Estado:** FASE 1, FASE 2 Y FASE 3 COMPLETADAS (Backend Supabase, Room SQLite v11, Modelos, Repositorio Offline-First y Casos de Uso); FASES 4–5 LISTAS PARA IMPLEMENTACIÓN.  
+**Estado:** FASE 1, FASE 2, FASE 3 Y FASE 4 COMPLETADAS (Backend Supabase, Room SQLite v11, Dominio, Repositorio Offline-First, UI Compose y Contraste en Corte de Caja); FASE 5 (Verificación Final) COMPLETADA.  
 
 ---
 
@@ -219,3 +219,55 @@ Se completó satisfactoriamente la infraestructura de persistencia local en Room
   - Prueba de cálculo derivado de monto total a partir de cantidad (10 kg) y precio unitario ($24.00/kg) resultando en $240.00.
   - Prueba de registro manual válido con limpieza de espacios en blanco.
 - Ejecución completa de suite de pruebas unitarias (`testDebugUnitTest`): 100% exitosa sin fallos ni regresiones.
+
+---
+
+## 7. Bitácora de Implementación — Fase 4: Interfaz de Usuario (Jetpack Compose) y Contraste en Corte de Caja
+
+### 7.1 Pantalla Principal de Gastos (`ExpensesScreen.kt` & `ExpensesViewModel.kt`)
+- `features/expenses/ExpensesUiState.kt`:
+  - Estado reactivo para la pantalla: `selectedDate`, `expenses`, `templates`, `profitSummary`, `selectedCategoryFilter`, `isFormDialogOpen`, `editingExpense`, `expenseToDelete`, `totalExpensesCents`, `cashExpensesCents`, `otherExpensesCents`.
+- `features/expenses/ExpensesViewModel.kt`:
+  - Vinculación con `AuthRepository` (detección de rol `admin` y `gerente`) y `NetworkMonitor` (estado de red en vivo).
+  - Observación reactiva local de gastos por fecha operativa (`America/Mexico_City`).
+  - Sincronización en segundo plano con Supabase y recarga automática de plantillas y rentabilidad diaria.
+  - Orquestación de creación, edición, eliminación y manejo de mensajes de éxito/error.
+- `features/expenses/ExpensesScreen.kt`:
+  - Cabecera con título, estado de conectividad (badge ambar si está sin conexión), y botón de refresco.
+  - Selector de fecha con atajo "Ir a Hoy" y diálogo de calendario `DatePickerDialog`.
+  - Tarjeta de resumen de egresos: Total Egresos del Día, desglose en efectivo de caja vs otros métodos, y badge dinámico de ganancia neta real cuando hay ventas registradas.
+  - Fila de chips de filtro por categoría (`Todas`, `Insumos`, `Servicios`, `Mantenimiento`, `Desechables`, `Otro`).
+  - Lista de tarjetas de gasto con badge de categoría, desglose `cantidad x precio unitario` (ej. `10 kg x $24.00`), método de pago, monto formateado, indicador de `Pendiente de sincronizar` si aplica, y botones de edición y eliminación.
+  - Botón flotante `FloatingActionButton` (+) para registrar egresos rápidamente.
+  - Diálogo de confirmación para eliminar gastos.
+
+### 7.2 Modal de Registro y Edición (`ExpenseFormDialog.kt`)
+- Selección rápida de plantillas frecuentes (ej. `Tortilla de comal`, `Tortilla de máquina`, `Reja Refresco Coca-Cola`, `Cilindro Gas LP`).
+- Selector de categoría interactivo.
+- Modo dual de captura:
+  - **Monto total directo** (ej. $290.00).
+  - **Por cantidad y precio unitario** (ej. 10 kg x $24.00 = $240.00 total calculado automáticamente).
+- Selector de método de pago (`Efectivo`, `Transferencia`, `Otro`).
+- Campo para notas o detalles (ej. "Dinero puesto por el patrón").
+- Validación previa al guardado (concepto obligatorio, monto > 0).
+
+### 7.3 Integración del Contraste de Rentabilidad en Corte de Caja (`CashRegisterScreen.kt`)
+- `CashRegisterUiState.kt` y `CashRegisterViewModel.kt`:
+  - Integración de `GetDailyProfitSummaryUseCase` al cargar cortes o realizar un corte nuevo.
+- `CashRegisterScreen.kt`:
+  - Enriquecimiento de `DaySummaryCard`:
+    - Ventas Totales (+): `$X.XX` (verde).
+    - Gastos Operativos (-): `-$Y.XX` (rojo).
+    - Nómina Pagada (-): `-$Z.XX` (rojo).
+    - Tarjeta destacada de **Ganancia Neta Real**: `$ (X - Y - Z).XX` con detalle de **Efectivo esperado en caja**.
+    - Botón de navegación directa hacia "Gestionar Gastos" (`EXPENSES`).
+
+### 7.4 Navegación Global (`MainScaffold.kt`)
+- Registro de `MainNavDestination.EXPENSES` ("Control de Gastos", `Icons.Outlined.Receipt`, restringido a gerencia y administración).
+- Integración en el drawer lateral dentro del grupo `Finanzas` (junto con `Corte de Caja`).
+- Enrutamiento hacia `ExpensesScreen` y soporte de retroceso (`BackHandler`).
+- Navegación fluida entre `CashRegisterScreen` y `ExpensesScreen`.
+
+### 7.5 Verificación y Calidad
+- Compilación de fuentes debug (`compileDebugSources`) completada exitosamente sin advertencias.
+- Suite completa de pruebas unitarias (`testDebugUnitTest`): 100% aprobada.

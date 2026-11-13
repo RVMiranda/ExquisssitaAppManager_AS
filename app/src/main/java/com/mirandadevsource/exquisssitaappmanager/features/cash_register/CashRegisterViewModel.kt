@@ -11,6 +11,7 @@ import com.mirandadevsource.exquisssitaappmanager.domain.repository.OrderReposit
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.CloseCashRegisterUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.GetCashRegisterCutsUseCase
 import com.mirandadevsource.exquisssitaappmanager.domain.usecases.GetCashRegisterDaySummaryUseCase
+import com.mirandadevsource.exquisssitaappmanager.domain.usecases.expenses.GetDailyProfitSummaryUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,7 @@ class CashRegisterViewModel @Inject constructor(
     private val closeCashRegisterUseCase: CloseCashRegisterUseCase,
     private val getCashRegisterCutsUseCase: GetCashRegisterCutsUseCase,
     private val getCashRegisterDaySummaryUseCase: GetCashRegisterDaySummaryUseCase,
+    private val getDailyProfitSummaryUseCase: GetDailyProfitSummaryUseCase,
     private val orderRepository: OrderRepository,
     private val authRepository: AuthRepository,
     private val networkMonitor: NetworkMonitor,
@@ -81,9 +83,11 @@ class CashRegisterViewModel @Inject constructor(
 
             val cutsResult = getCashRegisterCutsUseCase(date)
             val summaryResult = getCashRegisterDaySummaryUseCase(date)
+            val profitResult = getDailyProfitSummaryUseCase(date)
 
             cutsResult.onSuccess { cutsList ->
                 val summary = summaryResult.getOrNull()
+                val profit = profitResult.getOrNull()
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -91,6 +95,7 @@ class CashRegisterViewModel @Inject constructor(
                         selectedDate = date,
                         cuts = cutsList,
                         daySummary = summary,
+                        profitSummary = profit,
                         isOnline = networkMonitor.isOnline(),
                     )
                 }

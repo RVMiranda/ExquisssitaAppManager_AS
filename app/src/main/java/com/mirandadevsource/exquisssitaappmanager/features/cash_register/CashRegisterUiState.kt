@@ -2,6 +2,7 @@ package com.mirandadevsource.exquisssitaappmanager.features.cash_register
 
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.CashRegisterDaySummary
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.DailyClosure
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.DailyProfitSummary
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.UserRole
 import java.time.LocalDate
 import java.time.ZoneId
@@ -13,6 +14,7 @@ data class CashRegisterUiState(
     val selectedDate: String = LocalDate.now(BUSINESS_ZONE).toString(),
     val cuts: List<DailyClosure> = emptyList(),
     val daySummary: CashRegisterDaySummary? = null,
+    val profitSummary: DailyProfitSummary? = null,
     val openOrdersCount: Int = 0,
     val isOnline: Boolean = true,
     val userRole: UserRole? = null,

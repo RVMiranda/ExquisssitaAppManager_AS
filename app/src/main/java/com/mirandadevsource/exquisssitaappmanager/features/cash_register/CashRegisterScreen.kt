@@ -39,6 +39,7 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,6 +66,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.CashRegisterDaySummary
 import com.mirandadevsource.exquisssitaappmanager.domain.entity.DailyClosure
+import com.mirandadevsource.exquisssitaappmanager.domain.entity.DailyProfitSummary
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ApricotIllusion
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.BrandyBrown
 import com.mirandadevsource.exquisssitaappmanager.ui.theme.ChocolateFondant
@@ -82,6 +84,7 @@ import java.util.TimeZone
 fun CashRegisterScreen(
     viewModel: CashRegisterViewModel,
     onNavigateToOrders: () -> Unit = {},
+    onNavigateToExpenses: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -111,6 +114,7 @@ fun CashRegisterScreen(
         onConfirmCut = viewModel::executeCut,
         onDismissConfirmDialog = viewModel::dismissConfirmCutDialog,
         onNavigateToOrders = onNavigateToOrders,
+        onNavigateToExpenses = onNavigateToExpenses,
         modifier = modifier,
     )
 }
@@ -126,6 +130,7 @@ fun CashRegisterContent(
     onConfirmCut: () -> Unit,
     onDismissConfirmDialog: () -> Unit,
     onNavigateToOrders: () -> Unit,
+    onNavigateToExpenses: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -188,8 +193,10 @@ fun CashRegisterContent(
                 item {
                     DaySummaryCard(
                         summary = uiState.daySummary,
+                        profitSummary = uiState.profitSummary,
                         cutsCount = uiState.cuts.size,
                         selectedDate = uiState.selectedDate,
+                        onNavigateToExpenses = onNavigateToExpenses,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -630,8 +637,10 @@ private fun MaxCutsNoticeBanner(modifier: Modifier = Modifier) {
 @Composable
 private fun DaySummaryCard(
     summary: CashRegisterDaySummary?,
+    profitSummary: DailyProfitSummary?,
     cutsCount: Int,
     selectedDate: String,
+    onNavigateToExpenses: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val totalCents = summary?.totalCents ?: 0L
@@ -720,6 +729,138 @@ private fun DaySummaryCard(
                     color = BrandyBrown,
                     modifier = Modifier.weight(1f),
                 )
+            }
+
+            // Sección de Contraste de Rentabilidad (Ventas vs Gastos y Nómina)
+            if (profitSummary != null) {
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(color = ApricotIllusion)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Contraste de Rentabilidad del Día",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = ChocolateFondant,
+                    )
+                    TextButton(
+                        onClick = onNavigateToExpenses,
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Text(
+                            text = "Gestionar Gastos",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = BrandyBrown,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Métricas de ventas, gastos y nómina
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "Ventas Totales (+):",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ChocolateFondant,
+                    )
+                    Text(
+                        text = formatCentsToPesos(profitSummary.totalSalesCents),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF2E7D32),
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "Gastos Operativos (-):",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ChocolateFondant,
+                    )
+                    Text(
+                        text = "- ${formatCentsToPesos(profitSummary.totalExpensesCents)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFFC62828),
+                    )
+                }
+
+                if (profitSummary.totalPayrollCents > 0L) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = "Nómina Pagada (-):",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ChocolateFondant,
+                        )
+                        Text(
+                            text = "- ${formatCentsToPesos(profitSummary.totalPayrollCents)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFC62828),
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Tarjeta de Ganancia Neta Real
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (profitSummary.netProfitCents >= 0L) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                    border = BorderStroke(
+                        1.dp,
+                        if (profitSummary.netProfitCents >= 0L) Color(0xFF81C784) else Color(0xFFE57373),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column {
+                            Text(
+                                text = "Ganancia Neta Real",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (profitSummary.netProfitCents >= 0L) Color(0xFF1B5E20) else Color(0xFFB71C1C),
+                            )
+                            Text(
+                                text = "Efectivo esperado en caja: ${formatCentsToPesos(profitSummary.expectedCashInDrawerCents)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ChocolateFondant.copy(alpha = 0.7f),
+                            )
+                        }
+
+                        Text(
+                            text = formatCentsToPesos(profitSummary.netProfitCents),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (profitSummary.netProfitCents >= 0L) Color(0xFF2E7D32) else Color(0xFFC62828),
+                        )
+                    }
+                }
             }
         }
     }
