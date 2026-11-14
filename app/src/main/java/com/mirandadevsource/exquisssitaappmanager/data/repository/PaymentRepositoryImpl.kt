@@ -81,13 +81,26 @@ class PaymentRepositoryImpl @Inject constructor(
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { if (!failure.isNetworkFailure()) return Result.failure(failure) }
         }
+        val order = orderDao.getById(request.orderId) ?: return Result.failure(NoSuchElementException("Orden no disponible en el caché."))
+        if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
+        if (order.estado != OrderStatus.OPEN.databaseValue) {
+            val confirmedTxs = transactionDao.getForOrder(request.orderId)
+            val latestTx = confirmedTxs.maxByOrNull { it.fecha }
+            if (latestTx != null) {
+                return Result.success(PaymentCommand(
+                    idempotencyKey = latestTx.idempotencyKey,
+                    orderId = request.orderId,
+                    status = PaymentStatus.CONFIRMED,
+                    transactionId = latestTx.id,
+                    errorCode = null,
+                ))
+            }
+            return Result.failure(IllegalStateException("La orden no está abierta."))
+        }
+        if (commandDao.countPendingPayments(actor, request.orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un pago pendiente de confirmación."))
         if (request.amountCents <= 0 || request.allocations.isEmpty() || request.allocations.sumOf { it.amountCents } != request.amountCents) {
             return Result.failure(IllegalArgumentException("El importe y las asignaciones del pago no coinciden."))
         }
-        val order = orderDao.getById(request.orderId) ?: return Result.failure(NoSuchElementException("Orden no disponible en el caché."))
-        if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
-        if (order.estado != OrderStatus.OPEN.databaseValue) return Result.failure(IllegalStateException("La orden no está abierta."))
-        if (commandDao.countPendingPayments(actor, request.orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un pago pendiente de confirmación."))
         val total = detailDao.getForOrder(request.orderId).filter { it.estadoPago != PaymentLineStatus.CANCELLED.databaseValue }
             .sumOf { it.cantidad.toLong() * it.precioUnitarioCentavos }
         if (request.amountCents > total - transactionDao.getPaidAmount(request.orderId)) return Result.failure(IllegalArgumentException("El pago supera el saldo pendiente de la orden."))
@@ -143,6 +156,25 @@ class PaymentRepositoryImpl @Inject constructor(
         catch (failure: Exception) { Result.failure(failure) }
     }
 
+    override suspend fun discardPendingPayment(orderId: String): Result<Unit> {
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa."))
+        return try {
+            if (hasRemoteSession() && networkMonitor.isOnline()) {
+                refreshConfirmedPayments(orderId)
+            }
+            val confirmedPaid = transactionDao.getPaidAmount(orderId)
+            if (confirmedPaid > 0) {
+                return Result.failure(IllegalStateException("La orden ya tiene pagos confirmados en el servidor."))
+            }
+            commandDao.deletePendingPaymentsForOrder(actor, orderId)
+            Result.success(Unit)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Result.failure(failure)
+        }
+    }
+
     private suspend fun refreshConfirmedPayments(orderId: String) {
         if (!hasRemoteSession()) return
         val transactions = supabase.from(TRANSACTIONS).select(columns = TRANSACTION_COLUMNS) { filter { eq("orden_id", orderId) } }.decodeList<TransactionDto>()
@@ -167,8 +199,7 @@ class PaymentRepositoryImpl @Inject constructor(
     }
 
     private suspend fun refreshOrderAndItsPendingCommands(orderId: String) {
-        syncActorCommands()
-        // Populate the current order snapshot before accepting an online payment.
+        syncPendingPayments(force = true)
         val actor = actorId() ?: return
         val rows = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) { filter { eq("id", orderId) } }.decodeList<OrderDto>()
         val details = supabase.from(ORDER_DETAILS).select(columns = DETAIL_COLUMNS) { filter { eq("orden_id", orderId) } }.decodeList<OrderDetailDto>()
@@ -176,6 +207,7 @@ class PaymentRepositoryImpl @Inject constructor(
             rows.firstOrNull()?.let { row -> if (commandDao.countPendingForEntity(actor, row.id) == 0) orderDao.upsert(row.toEntity(actor)) }
             details.forEach { row -> if (commandDao.countPendingForEntity(actor, row.id) == 0) detailDao.upsert(row.toEntity()) }
         }
+        refreshConfirmedPayments(orderId)
     }
 
     private companion object {

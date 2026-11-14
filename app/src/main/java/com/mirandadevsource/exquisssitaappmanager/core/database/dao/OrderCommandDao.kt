@@ -78,4 +78,10 @@ interface OrderCommandDao {
 
     @Query("DELETE FROM order_command_outbox WHERE actorUserId = :actorId AND (status = 'REJECTED' OR lastErrorCode LIKE 'BLOCKED_BY_REJECTED_COMMAND%')")
     suspend fun deleteBlockedOrRejectedCommands(actorId: String): Int
+
+    @Query("DELETE FROM order_command_outbox WHERE actorUserId = :actorId AND aggregateId = :orderId AND entity = 'registrar_pago' AND status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH')")
+    suspend fun deletePendingPaymentsForOrder(actorId: String, orderId: String): Int
+
+    @Query("SELECT COUNT(*) FROM order_command_outbox WHERE actorUserId = :actorId AND aggregateId = :orderId AND entity != 'registrar_pago' AND status IN ('PENDING','PROCESSING','CONFIRMED_AWAITING_REFRESH')")
+    suspend fun countPendingNonPaymentForOrder(actorId: String, orderId: String): Int
 }

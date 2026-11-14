@@ -60,7 +60,7 @@ class OrderRepositoryImpl @Inject constructor(
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa."))
         if (!networkMonitor.isOnline() || !hasRemoteSession()) return Result.success(Unit)
         return try {
-            syncActorCommands()
+            syncActorCommands(includePayments = true, force = false)
             // The Data API may cap each response. Build complete snapshots before touching Room;
             // a partial page must never make valid cached rows look deleted.
             val orders = fetchAllOrders()
@@ -235,11 +235,14 @@ class OrderRepositoryImpl @Inject constructor(
 
     override suspend fun cancelOrder(orderId: String): Result<String> {
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
-        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
+        if (networkMonitor.isOnline() && hasRemoteSession()) {
+            syncPendingCommands(force = true)
+        }
         val order = orderDao.getById(orderId) ?: return Result.failure(NoSuchElementException("Orden no encontrada."))
         if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
-        if (commandDao.countPendingForEntity(actor, orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un cambio pendiente de sincronización."))
+        if (commandDao.countPendingNonPaymentForOrder(actor, orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un cambio pendiente de sincronización."))
         if (order.estado != OrderStatus.OPEN.databaseValue || transactionDao.getForOrder(orderId).isNotEmpty()) return Result.failure(IllegalStateException("Una orden con pagos requiere definir el reembolso antes de cancelarla."))
+        commandDao.deletePendingPaymentsForOrder(actor, orderId)
         val closedAt = Instant.now().toString(); val changed = order.copy(estado = OrderStatus.CANCELLED.databaseValue, fechaCierre = closedAt, syncState = OrderEntity.PENDING)
         val payload = buildJsonObject { put("estado", OrderStatus.CANCELLED.databaseValue); put("fecha_cierre", closedAt) }.toString()
         return enqueueAndSave(actor, orderId, ORDERS, orderId, "UPDATE", payload, order.syncVersion) { orderDao.upsert(changed) }
@@ -248,7 +251,7 @@ class OrderRepositoryImpl @Inject constructor(
     override suspend fun syncPendingCommands(): Result<Unit> = syncPendingCommands(force = false)
 
     override suspend fun syncPendingCommands(force: Boolean): Result<Unit> {
-        val result = syncActorCommands(force = force)
+        val result = syncActorCommands(includePayments = true, force = force)
         if (result.isSuccess && hasRemoteSession()) return refreshOrders()
         return result
     }

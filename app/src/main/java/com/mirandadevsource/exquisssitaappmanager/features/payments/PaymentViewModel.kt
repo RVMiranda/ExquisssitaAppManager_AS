@@ -310,6 +310,61 @@ class PaymentViewModel @Inject constructor(
     }
 
     /**
+     * Reintenta de forma forzada la sincronización de cobros pendientes con el servidor.
+     */
+    fun retryPendingPayment(onPaymentSuccess: (() -> Unit)? = null) {
+        val state = _uiState.value
+        val order = state.order ?: return
+        _uiState.update { it.copy(isSubmitting = true, errorMessage = null) }
+        viewModelScope.launch {
+            val syncResult = paymentRepository.syncPendingPayments(force = true)
+            orderRepository.refreshOrders()
+            syncResult.onSuccess {
+                _uiState.update { it.copy(isSubmitting = false, successMessage = "Sincronización de pagos completada.") }
+                if (_uiState.value.isFullyPaid) {
+                    onPaymentSuccess?.invoke()
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isSubmitting = false,
+                        errorMessage = err.localizedMessage ?: "No se pudo sincronizar el pago pendiente.",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Descarta un intento de pago local no confirmado en el servidor para liberar la orden.
+     */
+    fun discardPendingPayment() {
+        val state = _uiState.value
+        val order = state.order ?: return
+        _uiState.update { it.copy(isSubmitting = true, errorMessage = null) }
+        viewModelScope.launch {
+            val discardResult = paymentRepository.discardPendingPayment(order.id)
+            orderRepository.refreshOrders()
+            discardResult.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        isSubmitting = false,
+                        lastPaymentCommand = null,
+                        successMessage = "Intento de pago pendiente descartado. Ya puedes registrar el cobro.",
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isSubmitting = false,
+                        errorMessage = err.localizedMessage ?: "No se pudo descartar el pago pendiente.",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
      * Construye las asignaciones asegurando que cada partida reciba su cuota
      * y su consumo de existencias correspondiente sin exceder las unidades ordenadas
      * ni generar consumos de inventario para productos con controlaInventario = false.

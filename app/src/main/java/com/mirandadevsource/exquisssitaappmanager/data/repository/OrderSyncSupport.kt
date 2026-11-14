@@ -48,10 +48,8 @@ abstract class OrderSyncSupport(
                 outcome = latest
             } else if (blockOnEarlierCommand(latest)) {
                 outcome = commandDao.getByKey(latest.idempotencyKey) ?: latest
-            } else if (latest.nextAttemptAtMillis == null || latest.nextAttemptAtMillis <= System.currentTimeMillis()) {
-                outcome = submitClaimed(latest)
             } else {
-                outcome = latest
+                outcome = submitClaimed(latest)
             }
         }
         return if (acquired) outcome else commandDao.getByKey(command.idempotencyKey) ?: command
@@ -104,7 +102,7 @@ abstract class OrderSyncSupport(
         }
     }
 
-    protected suspend fun syncActorCommands(includePayments: Boolean = false, force: Boolean = false): Result<Unit> {
+    protected suspend fun syncActorCommands(includePayments: Boolean = true, force: Boolean = false): Result<Unit> {
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa para sincronizar."))
         if (!networkMonitor.isOnline() || !hasRemoteSession()) {
             return if (force) Result.failure(IllegalStateException("No hay conexión con el servidor para sincronizar."))

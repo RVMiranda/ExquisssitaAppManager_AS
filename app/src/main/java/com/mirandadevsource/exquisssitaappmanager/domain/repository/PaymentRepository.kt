@@ -10,4 +10,5 @@ interface PaymentRepository {
     suspend fun processPayment(request: PaymentRequest): Result<PaymentCommand>
     suspend fun syncPendingPayments(): Result<Unit> = syncPendingPayments(force = false)
     suspend fun syncPendingPayments(force: Boolean): Result<Unit> = Result.success(Unit)
+    suspend fun discardPendingPayment(orderId: String): Result<Unit> = Result.success(Unit)
 }

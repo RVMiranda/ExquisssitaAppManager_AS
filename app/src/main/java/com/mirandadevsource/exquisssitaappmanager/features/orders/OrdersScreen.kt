@@ -133,6 +133,12 @@ fun OrdersScreen(
             onSubmitPayment = {
                 paymentViewModel.processPayment()
             },
+            onRetryPendingPayment = {
+                paymentViewModel.retryPendingPayment()
+            },
+            onDiscardPendingPayment = {
+                paymentViewModel.discardPendingPayment()
+            },
             modifier = modifier,
         )
     } else if (uiState.selectedOrderId != null) {

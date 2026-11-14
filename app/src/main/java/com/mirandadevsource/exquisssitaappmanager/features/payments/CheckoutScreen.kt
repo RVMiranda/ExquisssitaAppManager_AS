@@ -48,6 +48,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -89,6 +90,8 @@ fun CheckoutScreen(
     onCashReceivedChanged: (String) -> Unit,
     onDismissMessage: () -> Unit,
     onSubmitPayment: () -> Unit,
+    onRetryPendingPayment: () -> Unit = {},
+    onDiscardPendingPayment: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val order = uiState.order
@@ -132,6 +135,19 @@ fun CheckoutScreen(
                         isError = uiState.errorMessage != null,
                         onDismiss = onDismissMessage,
                         isWarning = uiState.lastPaymentCommand?.status == PaymentStatus.PENDING_SYNC && uiState.errorMessage == null,
+                    )
+                }
+            }
+
+            // 1.1 Rescate de cobro pendiente de sincronizar
+            val hasPendingSync = uiState.payments.any { it.status == PaymentStatus.PENDING_SYNC } ||
+                uiState.lastPaymentCommand?.status == PaymentStatus.PENDING_SYNC
+            if (hasPendingSync && !uiState.isFullyPaid) {
+                item {
+                    PendingSyncResolutionCard(
+                        onRetrySync = onRetryPendingPayment,
+                        onDiscardPending = onDiscardPendingPayment,
+                        isSubmitting = uiState.isSubmitting,
                     )
                 }
             }
@@ -1049,4 +1065,86 @@ private fun PaymentHistorySection(
 private fun formatPesos(cents: Long): String {
     val format = NumberFormat.getCurrencyInstance(Locale("es", "MX"))
     return format.format(cents / 100.0)
+}
+
+@Composable
+private fun PendingSyncResolutionCard(
+    onRetrySync: () -> Unit,
+    onDiscardPending: () -> Unit,
+    isSubmitting: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFFFFF8E1),
+        border = BorderStroke(1.dp, OfflineAmber),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Payments,
+                    contentDescription = null,
+                    tint = OfflineAmber,
+                    modifier = Modifier.size(24.dp),
+                )
+                Text(
+                    text = "Cobro pendiente de confirmación",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = ChocolateFondant,
+                )
+            }
+            Text(
+                text = "Existe un intento de cobro previo guardado en la cola local. Puedes reintentar la sincronización directa o descartarlo si deseas cambiar el método de pago.",
+                style = MaterialTheme.typography.bodySmall,
+                color = ChocolateFondant.copy(alpha = 0.85f),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = onDiscardPending,
+                    enabled = !isSubmitting,
+                ) {
+                    Text(
+                        text = "Descartar intento",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFFC62828),
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = onRetrySync,
+                    enabled = !isSubmitting,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BrandyBrown,
+                        contentColor = Color.White,
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    if (isSubmitting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text(
+                            text = "Reintentar ahora",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }

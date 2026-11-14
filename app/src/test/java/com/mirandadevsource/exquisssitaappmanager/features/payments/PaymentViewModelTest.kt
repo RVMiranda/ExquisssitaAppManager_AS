@@ -408,12 +408,27 @@ class PaymentViewModelTest {
         assertEquals("Error forzado de pago.", result.exceptionOrNull()?.message)
     }
 
+    @Test
+    fun `FakePaymentRepository syncPendingPayments and discardPendingPayment succeed`() = runBlocking {
+        val repo = FakePaymentRepository()
+
+        val syncResult = repo.syncPendingPayments(force = true)
+        assertTrue(syncResult.isSuccess)
+        assertTrue(repo.syncPendingCalled)
+
+        val discardResult = repo.discardPendingPayment("ord-100")
+        assertTrue(discardResult.isSuccess)
+        assertTrue(repo.discardCalled)
+    }
+
     // --- Fakes para pruebas ---
 
     private class FakePaymentRepository : PaymentRepository {
         private val paymentsFlow = MutableStateFlow<List<Payment>>(emptyList())
         var lastRequest: PaymentRequest? = null
         var shouldFail = false
+        var syncPendingCalled = false
+        var discardCalled = false
 
         override fun observePayments(orderId: String): Flow<List<Payment>> = paymentsFlow
 
@@ -445,6 +460,16 @@ class PaymentViewModelTest {
             )
         }
 
-        override suspend fun syncPendingPayments(): Result<Unit> = Result.success(Unit)
+        override suspend fun syncPendingPayments(): Result<Unit> = syncPendingPayments(force = false)
+
+        override suspend fun syncPendingPayments(force: Boolean): Result<Unit> {
+            syncPendingCalled = true
+            return Result.success(Unit)
+        }
+
+        override suspend fun discardPendingPayment(orderId: String): Result<Unit> {
+            discardCalled = true
+            return Result.success(Unit)
+        }
     }
 }
