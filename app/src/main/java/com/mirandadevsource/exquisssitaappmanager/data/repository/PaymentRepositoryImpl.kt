@@ -150,7 +150,7 @@ class PaymentRepositoryImpl @Inject constructor(
         val actor = actorId() ?: return Result.success(Unit)
         return try {
             // Refresh each cached open order after its immutable payment intent has been replayed.
-            orderDao.getAllForActor(actor).map { it.id }.forEach { refreshConfirmedPayments(it) }
+            orderDao.getOpenOrdersForActor(actor).map { it.id }.forEach { refreshConfirmedPayments(it) }
             Result.success(Unit)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { Result.failure(failure) }
@@ -199,7 +199,7 @@ class PaymentRepositoryImpl @Inject constructor(
     }
 
     private suspend fun refreshOrderAndItsPendingCommands(orderId: String) {
-        syncPendingPayments(force = true)
+        syncActorCommands(includePayments = true, force = true)
         val actor = actorId() ?: return
         val rows = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) { filter { eq("id", orderId) } }.decodeList<OrderDto>()
         val details = supabase.from(ORDER_DETAILS).select(columns = DETAIL_COLUMNS) { filter { eq("orden_id", orderId) } }.decodeList<OrderDetailDto>()

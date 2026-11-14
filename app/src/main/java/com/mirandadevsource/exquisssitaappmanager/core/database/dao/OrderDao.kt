@@ -16,6 +16,9 @@ interface OrderDao {
     @Query("SELECT * FROM order_cache WHERE actorUserId = :actorId OR syncState = 'SYNCED' ORDER BY fechaApertura DESC")
     suspend fun getAllForActor(actorId: String): List<OrderEntity>
 
+    @Query("SELECT * FROM order_cache WHERE estado = 'Abierta' AND (actorUserId = :actorId OR syncState = 'SYNCED') ORDER BY fechaApertura DESC")
+    suspend fun getOpenOrdersForActor(actorId: String): List<OrderEntity>
+
     @Query("SELECT * FROM order_cache WHERE (actorUserId = :actorId OR syncState = 'SYNCED') AND (:openOnly = 0 OR estado = 'Abierta') AND (:fromInclusive IS NULL OR fechaApertura >= :fromInclusive) AND (:toExclusive IS NULL OR fechaApertura < :toExclusive) ORDER BY fechaApertura DESC, id DESC LIMIT :limit OFFSET :offset")
     suspend fun getPage(actorId: String, openOnly: Boolean, fromInclusive: String?, toExclusive: String?, limit: Int, offset: Int): List<OrderEntity>
 

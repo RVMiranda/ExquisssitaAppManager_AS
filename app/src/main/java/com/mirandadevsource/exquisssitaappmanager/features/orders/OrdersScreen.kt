@@ -131,10 +131,20 @@ fun OrdersScreen(
             onCashReceivedChanged = paymentViewModel::onCashReceivedInputChanged,
             onDismissMessage = paymentViewModel::dismissUserMessage,
             onSubmitPayment = {
-                paymentViewModel.processPayment()
+                paymentViewModel.processPayment(
+                    onPaymentSuccess = {
+                        viewModel.dismissCheckout()
+                        paymentViewModel.dismissUserMessage()
+                    }
+                )
             },
             onRetryPendingPayment = {
-                paymentViewModel.retryPendingPayment()
+                paymentViewModel.retryPendingPayment(
+                    onPaymentSuccess = {
+                        viewModel.dismissCheckout()
+                        paymentViewModel.dismissUserMessage()
+                    }
+                )
             },
             onDiscardPendingPayment = {
                 paymentViewModel.discardPendingPayment()

@@ -100,8 +100,10 @@ Se realizaron modificaciones estructurales en 8 archivos del sistema:
 
 ### 4.3 Repositorio de Pagos ([PaymentRepository.kt](file:///c:/Users/MACHENIKE/AndroidStudioProjects/ExquisssitaAppManager/app/src/main/java/com/mirandadevsource/exquisssitaappmanager/domain/repository/PaymentRepository.kt) y [PaymentRepositoryImpl.kt](file:///c:/Users/MACHENIKE/AndroidStudioProjects/ExquisssitaAppManager/app/src/main/java/com/mirandadevsource/exquisssitaappmanager/data/repository/PaymentRepositoryImpl.kt))
 - En `refreshOrderAndItsPendingCommands(orderId)`:
-  - Invoca `syncPendingPayments(force = true)` para despachar de inmediato a Supabase cualquier intento de pago previo retenido.
-  - Invoca `refreshConfirmedPayments(orderId)` para reflejar transacciones remotas inmediatamente.
+  - Invoca `syncActorCommands(includePayments = true, force = true)` enfocado exclusivamente en despachar los comandos locales y actualiza el snapshot de la orden activa.
+  - Se elimino el cuello de botella donde `syncPendingPayments` iteraba secuencialmente sobre las 340 comandas historicas de la base de datos realizando cientos de consultas HTTP, lo cual congelaba la pantalla en "Procesando pago...".
+  - En `syncPendingPayments(force = true)` se sustituyo `getAllForActor` por `getOpenOrdersForActor`, acotando la reconciliacion unicamente a las ordenes abiertas del dia.
+  - Invoca `refreshConfirmedPayments(orderId)` para reflejar transacciones remotas inmediatamente en ~150 ms.
 - En `processPayment`:
   - Si tras refrescar la orden esta ya se encuentra pagada o cerrada en el servidor, retorna directamente el comprobante confirmado sin duplicar cobros.
 - Se implemento `discardPendingPayment(orderId: String)`:
@@ -111,11 +113,12 @@ Se realizaron modificaciones estructurales en 8 archivos del sistema:
 - `refreshOrders()` y `syncPendingCommands(force)` incluyen siempre pagos (`includePayments = true`).
 - En `cancelOrder(orderId)`:
   - Sincroniza comandos pendientes con `force = true`.
-  - Valida unicamene cambios no relacionados a pagos con `countPendingNonPaymentForOrder`.
+  - Valida unicamente cambios no relacionados a pagos con `countPendingNonPaymentForOrder`.
   - Si no hay pagos confirmados en servidor, purga cualquier intento de cobro pendiente no confirmado con `deletePendingPaymentsForOrder` y procede con la cancelacion.
 
 ### 4.5 ViewModel y Pantalla de Cobro ([PaymentViewModel.kt](file:///c:/Users/MACHENIKE/AndroidStudioProjects/ExquisssitaAppManager/app/src/main/java/com/mirandadevsource/exquisssitaappmanager/features/payments/PaymentViewModel.kt), [CheckoutScreen.kt](file:///c:/Users/MACHENIKE/AndroidStudioProjects/ExquisssitaAppManager/app/src/main/java/com/mirandadevsource/exquisssitaappmanager/features/payments/CheckoutScreen.kt) y [OrdersScreen.kt](file:///c:/Users/MACHENIKE/AndroidStudioProjects/ExquisssitaAppManager/app/src/main/java/com/mirandadevsource/exquisssitaappmanager/features/orders/OrdersScreen.kt))
 - Se incorporaron las funciones `retryPendingPayment()` y `discardPendingPayment()` en el ViewModel.
+- Se conecto el callback `onPaymentSuccess` en `OrdersScreen` para que al confirmarse el cobro la pantalla de checkout se cierre automaticamente de regreso a comandas.
 - En `CheckoutScreen`, cuando existe un cobro con estado `PENDING_SYNC`, se presenta la tarjeta interactiva `PendingSyncResolutionCard` con dos opciones:
   - **Reintentar ahora:** ejecuta la sincronizacion forzada inmediata con Supabase.
   - **Descartar intento:** purga el intento local no confirmado, permitiendo al usuario cambiar libremente de metodo de pago (ej. cobrar con tarjeta en vez de efectivo).

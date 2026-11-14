@@ -24,6 +24,9 @@ abstract class SyncExecutionLeaseDao {
     @Query("DELETE FROM sync_execution_leases WHERE actorUserId = :actorUserId AND leaseOwner = :owner")
     abstract suspend fun release(actorUserId: String, owner: String): Int
 
+    @Query("DELETE FROM sync_execution_leases WHERE actorUserId = :actorUserId")
+    abstract suspend fun clearLeaseForActor(actorUserId: String): Int
+
     @Transaction
     open suspend fun acquire(lease: SyncExecutionLeaseEntity, nowMillis: Long): Boolean {
         deleteExpired(lease.actorUserId, nowMillis)

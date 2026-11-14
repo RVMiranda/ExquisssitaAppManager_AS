@@ -111,6 +111,9 @@ abstract class OrderSyncSupport(
         return try {
             var failedCount = 0
             var lastErrorMessage: String? = null
+            if (force) {
+                leaseDao.clearLeaseForActor(actor)
+            }
             val acquired = SyncExecutionMutex.withActorLease(actor, leaseDao) {
                 if (force) {
                     commandDao.resetInterruptedProcessing(actor)
