@@ -361,22 +361,44 @@ class InventoryViewModel @Inject constructor(
     fun submitStockMovement() {
         val state = _uiState.value
         val product = state.movementProduct ?: return
-        val rawQty = state.movementQuantity.trim().toIntOrNull()
-
-        if (rawQty == null || rawQty == 0) {
-            _uiState.update { it.copy(movementErrorMessage = "Ingresa una cantidad válida mayor a cero.") }
-            return
-        }
-
         val type = state.movementType
-        val signedQty = when (type) {
-            InventoryMovementType.ENTRADA -> rawQty.coerceAtLeast(1)
-            InventoryMovementType.MERMA -> -rawQty.coerceAtLeast(1)
-            InventoryMovementType.AJUSTE -> rawQty // can be positive or negative delta
-            else -> rawQty
+        val currentStock = product.stockActual ?: 0
+
+        val signedQty: Int
+        if (type == InventoryMovementType.AJUSTE) {
+            val newStock = state.movementQuantity.trim().toIntOrNull()
+            if (newStock == null || newStock < 0) {
+                _uiState.update { it.copy(movementErrorMessage = "Ingresa un número entero mayor o igual a cero para el stock físico.") }
+                return
+            }
+            val delta = newStock - currentStock
+            if (delta == 0) {
+                _uiState.update { it.copy(movementErrorMessage = "El stock real ingresado es igual al stock actual ($currentStock uds). No se requiere ajuste.") }
+                return
+            }
+            signedQty = delta
+        } else {
+            val rawQty = state.movementQuantity.trim().toIntOrNull()
+            if (rawQty == null || rawQty <= 0) {
+                _uiState.update { it.copy(movementErrorMessage = "Ingresa una cantidad válida mayor a cero.") }
+                return
+            }
+            signedQty = when (type) {
+                InventoryMovementType.ENTRADA -> rawQty
+                InventoryMovementType.MERMA -> -rawQty
+                else -> rawQty
+            }
         }
 
         val expectedVersion = if (type == InventoryMovementType.AJUSTE) product.syncVersion else null
+        val baseNotes = state.movementNotas.trim().ifBlank { null }
+        val finalNotes = if (type == InventoryMovementType.AJUSTE) {
+            val newStock = currentStock + signedQty
+            val auditNote = "Ajuste físico: de $currentStock a $newStock uds"
+            if (baseNotes != null) "$baseNotes ($auditNote)" else auditNote
+        } else {
+            baseNotes
+        }
 
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingMovement = true, movementErrorMessage = null) }
@@ -386,18 +408,24 @@ class InventoryViewModel @Inject constructor(
                 quantity = signedQty,
                 type = type,
                 referenceId = null,
-                notes = state.movementNotas.trim().ifBlank { null },
+                notes = finalNotes,
                 expectedVersion = expectedVersion,
             )
 
             registerInventoryMovementUseCase(request)
                 .onSuccess {
+                    val successMsg = if (type == InventoryMovementType.AJUSTE) {
+                        val newStock = currentStock + signedQty
+                        "Ajuste registrado exitosamente. Nuevo stock: $newStock uds."
+                    } else {
+                        "Movimiento de stock registrado."
+                    }
                     _uiState.update { current ->
                         current.copy(
                             isSubmittingMovement = false,
                             isMovementDialogOpen = false,
                             movementProduct = null,
-                            userMessage = "Movimiento de stock registrado.",
+                            userMessage = successMsg,
                         )
                     }
                     loadProducts(isRefresh = true)

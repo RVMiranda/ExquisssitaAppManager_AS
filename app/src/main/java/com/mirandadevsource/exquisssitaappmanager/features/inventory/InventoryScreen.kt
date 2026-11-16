@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -64,6 +65,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -1433,7 +1435,7 @@ private fun StockMovementDialog(
                 val qtyLabel = when (movementType) {
                     InventoryMovementType.ENTRADA -> "Cantidad a ingresar (+)"
                     InventoryMovementType.MERMA -> "Cantidad a descontar (-)"
-                    InventoryMovementType.AJUSTE -> "Delta de ajuste (+/- unidades)"
+                    InventoryMovementType.AJUSTE -> "Nuevo stock real contado"
                     else -> "Cantidad"
                 }
 
@@ -1442,6 +1444,7 @@ private fun StockMovementDialog(
                     onValueChange = onQuantityChange,
                     label = { Text(qtyLabel) },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = BrandyBrown,
@@ -1449,6 +1452,54 @@ private fun StockMovementDialog(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                if (movementType == InventoryMovementType.AJUSTE) {
+                    val currentStock = product.stockActual ?: 0
+                    val targetStock = quantity.trim().toIntOrNull()
+                    val delta = targetStock?.let { it - currentStock }
+
+                    Spacer(Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFFFBF8F5),
+                        border = BorderStroke(1.dp, ApricotIllusion.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "Stock actual en sistema: $currentStock uds",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ChocolateFondant,
+                            )
+                            if (delta != null) {
+                                Spacer(Modifier.height(4.dp))
+                                val deltaText = when {
+                                    delta > 0 -> "Ajuste a aplicar: +$delta uds (se sumarán al inventario)"
+                                    delta < 0 -> "Ajuste a aplicar: $delta uds (se restarán del inventario)"
+                                    else -> "El stock ingresado es idéntico al actual (sin cambios)"
+                                }
+                                val deltaColor = when {
+                                    delta > 0 -> SuccessGreen
+                                    delta < 0 -> ErrorRed
+                                    else -> ChocolateFondant.copy(alpha = 0.7f)
+                                }
+                                Text(
+                                    text = deltaText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = deltaColor,
+                                )
+                            } else {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = "Escribe el total físico que contaste en almacén.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = ChocolateFondant.copy(alpha = 0.6f),
+                                )
+                            }
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(10.dp))
 
