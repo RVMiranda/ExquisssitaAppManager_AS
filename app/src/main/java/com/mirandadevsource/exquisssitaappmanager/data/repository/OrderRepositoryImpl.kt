@@ -18,6 +18,7 @@ import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order as PostgrestOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -60,18 +61,54 @@ class OrderRepositoryImpl @Inject constructor(
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa."))
         if (!networkMonitor.isOnline() || !hasRemoteSession()) return Result.success(Unit)
         return try {
-            syncActorCommands(includePayments = true, force = false)
-            // The Data API may cap each response. Build complete snapshots before touching Room;
-            // a partial page must never make valid cached rows look deleted.
-            val orders = fetchAllOrders()
-            val details = fetchAllOrderDetails()
-            database.withTransaction {
-                // A missing row in an offset-paginated response is not an explicit delete.
-                // Deletes/cancellations must be reconciled by their command or server status.
-                orders.forEach { dto -> if (commandDao.countPendingForEntity(actor, dto.id) == 0) orderDao.upsert(dto.toEntity(actor)) }
-                details.forEach { dto -> if (commandDao.countPendingForEntity(actor, dto.id) == 0) detailDao.upsert(dto.toEntity()) }
+            withTimeout(15_000L) {
+                syncActorCommands(includePayments = true, force = false)
+                val activeOrders = fetchActiveAndRecentOrders()
+                val orderIds = activeOrders.map { it.id }
+                val details = if (orderIds.isNotEmpty()) fetchDetailsForOrders(orderIds) else emptyList()
+                database.withTransaction {
+                    activeOrders.forEach { dto ->
+                        if (commandDao.countPendingForEntity(actor, dto.id) == 0) {
+                            orderDao.upsert(dto.toEntity(actor))
+                        }
+                    }
+                    details.forEach { dto ->
+                        if (commandDao.countPendingForEntity(actor, dto.id) == 0) {
+                            detailDao.upsert(dto.toEntity())
+                        }
+                    }
+                }
+                Result.success(Unit)
             }
-            Result.success(Unit)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { if (failure.isNetworkFailure()) Result.success(Unit) else Result.failure(failure) }
+    }
+
+    override suspend fun refreshOrder(orderId: String): Result<Unit> {
+        val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa."))
+        if (!networkMonitor.isOnline() || !hasRemoteSession()) return Result.success(Unit)
+        return try {
+            withTimeout(10_000L) {
+                val orderRows = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) {
+                    filter { eq("id", orderId) }
+                }.decodeList<OrderDto>()
+                val detailRows = supabase.from(DETAILS).select(columns = DETAIL_COLUMNS) {
+                    filter { eq("orden_id", orderId) }
+                }.decodeList<OrderDetailDto>()
+                database.withTransaction {
+                    orderRows.firstOrNull()?.let { dto ->
+                        if (commandDao.countPendingForEntity(actor, dto.id) == 0) {
+                            orderDao.upsert(dto.toEntity(actor))
+                        }
+                    }
+                    detailRows.forEach { dto ->
+                        if (commandDao.countPendingForEntity(actor, dto.id) == 0) {
+                            detailDao.upsert(dto.toEntity())
+                        }
+                    }
+                }
+                Result.success(Unit)
+            }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { if (failure.isNetworkFailure()) Result.success(Unit) else Result.failure(failure) }
     }
@@ -183,7 +220,7 @@ class OrderRepositoryImpl @Inject constructor(
 
     override suspend fun addItem(request: AddOrderItemRequest): Result<String> {
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
-        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
+        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrder(request.orderId)
         if (request.quantity <= 0 || request.unitPriceCents < 0) return Result.failure(IllegalArgumentException("Cantidad o precio inválido."))
         val order = orderDao.getById(request.orderId) ?: return Result.failure(NoSuchElementException("Orden no disponible en caché."))
         if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
@@ -209,8 +246,8 @@ class OrderRepositoryImpl @Inject constructor(
     override suspend fun updateItemQuantity(detailId: String, quantity: Int): Result<String> {
         if (quantity <= 0) return Result.failure(IllegalArgumentException("La cantidad debe ser mayor que cero."))
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
-        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
         val line = detailDao.getById(detailId) ?: return Result.failure(NoSuchElementException("Partida no encontrada."))
+        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrder(line.ordenId)
         val parentOrder = orderDao.getById(line.ordenId)
         if (parentOrder != null && parentOrder.syncState != OrderEntity.SYNCED && parentOrder.actorUserId != actor) return Result.failure(IllegalStateException("La partida pertenece a otra sesión local no sincronizada."))
         if (commandDao.countPendingForEntity(actor, detailId) > 0) return Result.failure(IllegalStateException("La partida tiene un cambio pendiente de sincronización."))
@@ -221,8 +258,8 @@ class OrderRepositoryImpl @Inject constructor(
 
     override suspend fun cancelItem(detailId: String): Result<String> {
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
-        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrders()
         val line = detailDao.getById(detailId) ?: return Result.failure(NoSuchElementException("Partida no encontrada."))
+        if (networkMonitor.isOnline() && hasRemoteSession()) refreshOrder(line.ordenId)
         val parentOrder = orderDao.getById(line.ordenId)
         if (parentOrder != null && parentOrder.syncState != OrderEntity.SYNCED && parentOrder.actorUserId != actor) return Result.failure(IllegalStateException("La partida pertenece a otra sesión local no sincronizada."))
         if (commandDao.countPendingForEntity(actor, detailId) > 0) return Result.failure(IllegalStateException("La partida tiene un cambio pendiente de sincronización."))
@@ -235,17 +272,34 @@ class OrderRepositoryImpl @Inject constructor(
 
     override suspend fun cancelOrder(orderId: String): Result<String> {
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere sesión activa."))
-        if (networkMonitor.isOnline() && hasRemoteSession()) {
-            syncPendingCommands(force = true)
+        return try {
+            withTimeout(15_000L) {
+                if (networkMonitor.isOnline() && hasRemoteSession()) {
+                    try {
+                        syncActorCommands(includePayments = true, force = true)
+                    } catch (_: Exception) {}
+                    refreshOrder(orderId)
+                }
+                val order = orderDao.getById(orderId) ?: return@withTimeout Result.failure(NoSuchElementException("Orden no encontrada."))
+                if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) {
+                    return@withTimeout Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
+                }
+                if (order.estado != OrderStatus.OPEN.databaseValue || transactionDao.getForOrder(orderId).isNotEmpty()) {
+                    return@withTimeout Result.failure(IllegalStateException("Una orden con pagos requiere definir el reembolso antes de cancelarla."))
+                }
+                commandDao.deletePendingPaymentsForOrder(actor, orderId)
+                val closedAt = Instant.now().toString()
+                val changed = order.copy(estado = OrderStatus.CANCELLED.databaseValue, fechaCierre = closedAt, syncState = OrderEntity.PENDING)
+                val payload = buildJsonObject { put("estado", OrderStatus.CANCELLED.databaseValue); put("fecha_cierre", closedAt) }.toString()
+                enqueueAndSave(actor, orderId, ORDERS, orderId, "UPDATE", payload, order.syncVersion) {
+                    orderDao.upsert(changed)
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-        val order = orderDao.getById(orderId) ?: return Result.failure(NoSuchElementException("Orden no encontrada."))
-        if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
-        if (commandDao.countPendingNonPaymentForOrder(actor, orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un cambio pendiente de sincronización."))
-        if (order.estado != OrderStatus.OPEN.databaseValue || transactionDao.getForOrder(orderId).isNotEmpty()) return Result.failure(IllegalStateException("Una orden con pagos requiere definir el reembolso antes de cancelarla."))
-        commandDao.deletePendingPaymentsForOrder(actor, orderId)
-        val closedAt = Instant.now().toString(); val changed = order.copy(estado = OrderStatus.CANCELLED.databaseValue, fechaCierre = closedAt, syncState = OrderEntity.PENDING)
-        val payload = buildJsonObject { put("estado", OrderStatus.CANCELLED.databaseValue); put("fecha_cierre", closedAt) }.toString()
-        return enqueueAndSave(actor, orderId, ORDERS, orderId, "UPDATE", payload, order.syncVersion) { orderDao.upsert(changed) }
     }
 
     override suspend fun syncPendingCommands(): Result<Unit> = syncPendingCommands(force = false)
@@ -273,38 +327,38 @@ class OrderRepositoryImpl @Inject constructor(
         return try {
             database.withTransaction { commandDao.insert(command); save() }
             val submitted = submit(command)
-            if (submitted.status == OrderCommandEntity.SYNCED || submitted.status == OrderCommandEntity.REJECTED) refreshOrders()
+            if (submitted.status == OrderCommandEntity.SYNCED || submitted.status == OrderCommandEntity.REJECTED) {
+                refreshOrder(aggregate)
+            }
             Result.success(entityId)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { Result.failure(failure) }
     }
 
-    private suspend fun fetchAllOrders(): List<OrderDto> {
-        val rows = mutableListOf<OrderDto>()
-        var offset = 0L
-        while (true) {
-            val page = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) {
-                order("id", PostgrestOrder.ASCENDING)
-                range(offset..(offset + SNAPSHOT_PAGE_SIZE - 1))
-            }.decodeList<OrderDto>()
-            rows += page
-            if (page.size.toLong() < SNAPSHOT_PAGE_SIZE) return rows
-            offset += SNAPSHOT_PAGE_SIZE
-        }
+    private suspend fun fetchActiveAndRecentOrders(): List<OrderDto> {
+        val openOrders = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) {
+            filter { eq("estado", OrderStatus.OPEN.databaseValue) }
+            order("fecha_apertura", PostgrestOrder.DESCENDING)
+            limit(100)
+        }.decodeList<OrderDto>()
+        val recentThreshold = Instant.now().minus(java.time.Duration.ofHours(48)).toString()
+        val recentOrders = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) {
+            filter { gte("fecha_apertura", recentThreshold) }
+            order("fecha_apertura", PostgrestOrder.DESCENDING)
+            limit(200)
+        }.decodeList<OrderDto>()
+        return (openOrders + recentOrders).distinctBy { it.id }
     }
 
-    private suspend fun fetchAllOrderDetails(): List<OrderDetailDto> {
-        val rows = mutableListOf<OrderDetailDto>()
-        var offset = 0L
-        while (true) {
+    private suspend fun fetchDetailsForOrders(orderIds: List<String>): List<OrderDetailDto> {
+        val details = mutableListOf<OrderDetailDto>()
+        orderIds.chunked(100).forEach { chunk ->
             val page = supabase.from(DETAILS).select(columns = DETAIL_COLUMNS) {
-                order("id", PostgrestOrder.ASCENDING)
-                range(offset..(offset + SNAPSHOT_PAGE_SIZE - 1))
+                filter { isIn("orden_id", chunk) }
             }.decodeList<OrderDetailDto>()
-            rows += page
-            if (page.size.toLong() < SNAPSHOT_PAGE_SIZE) return rows
-            offset += SNAPSHOT_PAGE_SIZE
+            details += page
         }
+        return details
     }
 
     private companion object {

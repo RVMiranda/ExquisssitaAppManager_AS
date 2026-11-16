@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.TimeoutException
 import javax.inject.Inject
 
 @HiltViewModel
@@ -373,23 +375,38 @@ class OrderViewModel @Inject constructor(
         val item = _uiState.value.itemToCancel ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isCancellingAction = true) }
-            val result = orderRepository.cancelItem(item.id)
-            result.onSuccess {
+            try {
+                val result = withTimeoutOrNull(15_000L) {
+                    orderRepository.cancelItem(item.id)
+                } ?: Result.failure(TimeoutException("Tiempo de espera agotado al cancelar la partida."))
+
+                result.onSuccess {
+                    _uiState.update {
+                        it.copy(
+                            itemToCancel = null,
+                            isCancellingAction = false,
+                            successMessage = "Partida cancelada de la comanda.",
+                        )
+                    }
+                }.onFailure { ex ->
+                    _uiState.update {
+                        it.copy(
+                            itemToCancel = null,
+                            isCancellingAction = false,
+                            orderActionError = ex.localizedMessage ?: "No se pudo cancelar la partida.",
+                        )
+                    }
+                }
+            } catch (ex: Exception) {
                 _uiState.update {
                     it.copy(
                         itemToCancel = null,
                         isCancellingAction = false,
-                        successMessage = "Partida cancelada de la comanda.",
+                        orderActionError = ex.localizedMessage ?: "Error inesperado al cancelar la partida.",
                     )
                 }
-            }.onFailure { ex ->
-                _uiState.update {
-                    it.copy(
-                        itemToCancel = null,
-                        isCancellingAction = false,
-                        orderActionError = ex.localizedMessage ?: "No se pudo cancelar la partida.",
-                    )
-                }
+            } finally {
+                _uiState.update { it.copy(isCancellingAction = false, itemToCancel = null) }
             }
         }
     }
@@ -403,25 +420,40 @@ class OrderViewModel @Inject constructor(
         val order = _uiState.value.orderToCancel ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isCancellingAction = true) }
-            val result = orderRepository.cancelOrder(order.id)
-            result.onSuccess {
+            try {
+                val result = withTimeoutOrNull(20_000L) {
+                    orderRepository.cancelOrder(order.id)
+                } ?: Result.failure(TimeoutException("Tiempo de espera agotado al cancelar la comanda."))
+
+                result.onSuccess {
+                    _uiState.update {
+                        it.copy(
+                            orderToCancel = null,
+                            isCancellingAction = false,
+                            selectedOrderId = null,
+                            selectedOrderDetails = emptyList(),
+                            successMessage = "Comanda cancelada exitosamente.",
+                        )
+                    }
+                }.onFailure { ex ->
+                    _uiState.update {
+                        it.copy(
+                            orderToCancel = null,
+                            isCancellingAction = false,
+                            orderActionError = ex.localizedMessage ?: "No se pudo cancelar la comanda.",
+                        )
+                    }
+                }
+            } catch (ex: Exception) {
                 _uiState.update {
                     it.copy(
                         orderToCancel = null,
                         isCancellingAction = false,
-                        selectedOrderId = null,
-                        selectedOrderDetails = emptyList(),
-                        successMessage = "Comanda cancelada exitosamente.",
+                        orderActionError = ex.localizedMessage ?: "Error inesperado al cancelar la comanda.",
                     )
                 }
-            }.onFailure { ex ->
-                _uiState.update {
-                    it.copy(
-                        orderToCancel = null,
-                        isCancellingAction = false,
-                        orderActionError = ex.localizedMessage ?: "No se pudo cancelar la comanda.",
-                    )
-                }
+            } finally {
+                _uiState.update { it.copy(isCancellingAction = false, orderToCancel = null) }
             }
         }
     }

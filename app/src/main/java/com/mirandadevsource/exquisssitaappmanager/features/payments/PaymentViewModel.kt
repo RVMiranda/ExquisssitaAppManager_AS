@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.TimeoutException
 import javax.inject.Inject
 
 @HiltViewModel
@@ -257,54 +259,73 @@ class PaymentViewModel @Inject constructor(
         _uiState.update { it.copy(isSubmitting = true, errorMessage = null) }
 
         viewModelScope.launch {
-            val result = paymentRepository.processPayment(request)
-            result.onSuccess { command ->
-                when (command.status) {
-                    PaymentStatus.CONFIRMED -> {
-                        _uiState.update {
-                            it.copy(
-                                isSubmitting = false,
-                                lastPaymentCommand = command,
-                                successMessage = "Pago de ${formatPesos(totalPaymentCents)} confirmado.",
-                                cashReceivedInput = "",
-                            )
+            try {
+                val result = withTimeoutOrNull(20_000L) {
+                    paymentRepository.processPayment(request)
+                } ?: Result.failure(TimeoutException("El tiempo de espera para procesar el pago se agotó. Verifica tu conexión."))
+
+                result.onSuccess { command ->
+                    when (command.status) {
+                        PaymentStatus.CONFIRMED -> {
+                            _uiState.update {
+                                it.copy(
+                                    isSubmitting = false,
+                                    lastPaymentCommand = command,
+                                    successMessage = "Pago de ${formatPesos(totalPaymentCents)} confirmado.",
+                                    cashReceivedInput = "",
+                                )
+                            }
+                            // Cierre inmediato del flujo de cobro
+                            onPaymentSuccess?.invoke()
+                            // Sincronización en segundo plano sin bloquear la UI
+                            viewModelScope.launch {
+                                try {
+                                    orderRepository.refreshOrders()
+                                } catch (_: Exception) {}
+                            }
                         }
-                        // Sólo un pago confirmado puede cerrar el flujo de cobro.
-                        orderRepository.refreshOrders()
-                        onPaymentSuccess?.invoke()
+                        PaymentStatus.PENDING_SYNC -> {
+                            _uiState.update {
+                                it.copy(
+                                    isSubmitting = false,
+                                    lastPaymentCommand = command,
+                                    successMessage = "Pago guardado y pendiente de sincronizar. No lo vuelvas a capturar.",
+                                )
+                            }
+                        }
+                        PaymentStatus.REJECTED -> {
+                            _uiState.update {
+                                it.copy(
+                                    isSubmitting = false,
+                                    lastPaymentCommand = command,
+                                    errorMessage = paymentRejectionMessage(command.errorCode),
+                                )
+                            }
+                        }
                     }
-                    PaymentStatus.PENDING_SYNC -> {
-                        _uiState.update {
-                            it.copy(
-                                isSubmitting = false,
-                                lastPaymentCommand = command,
-                                successMessage = "Pago guardado y pendiente de sincronizar. No lo vuelvas a capturar.",
-                            )
-                        }
+                }.onFailure { err ->
+                    val errorMsg = when {
+                        err.message?.contains("saldo pendiente", ignoreCase = true) == true ->
+                            "El pago supera el saldo pendiente de la comanda."
+                        err.message?.contains("stock", ignoreCase = true) == true ->
+                            "Stock insuficiente en almacén para completar el cobro."
+                        err.message?.contains("sesión", ignoreCase = true) == true ->
+                            "Sesión no autorizada o expirada."
+                        else -> err.localizedMessage ?: "Error al procesar el pago."
                     }
-                    PaymentStatus.REJECTED -> {
-                        _uiState.update {
-                            it.copy(
-                                isSubmitting = false,
-                                lastPaymentCommand = command,
-                                errorMessage = paymentRejectionMessage(command.errorCode),
-                            )
-                        }
+                    _uiState.update {
+                        it.copy(isSubmitting = false, errorMessage = errorMsg)
                     }
                 }
-            }.onFailure { err ->
-                val errorMsg = when {
-                    err.message?.contains("saldo pendiente", ignoreCase = true) == true ->
-                        "El pago supera el saldo pendiente de la comanda."
-                    err.message?.contains("stock", ignoreCase = true) == true ->
-                        "Stock insuficiente en almacén para completar el cobro."
-                    err.message?.contains("sesión", ignoreCase = true) == true ->
-                        "Sesión no autorizada o expirada."
-                    else -> err.localizedMessage ?: "Error al procesar el pago."
-                }
+            } catch (ex: Exception) {
                 _uiState.update {
-                    it.copy(isSubmitting = false, errorMessage = errorMsg)
+                    it.copy(
+                        isSubmitting = false,
+                        errorMessage = ex.localizedMessage ?: "Error inesperado al procesar el pago.",
+                    )
                 }
+            } finally {
+                _uiState.update { it.copy(isSubmitting = false) }
             }
         }
     }

@@ -20,6 +20,7 @@ import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -76,68 +77,70 @@ class PaymentRepositoryImpl @Inject constructor(
 
     override suspend fun processPayment(request: PaymentRequest): Result<PaymentCommand> {
         val actor = actorId() ?: return Result.failure(IllegalStateException("Se requiere una sesión activa."))
-        if (hasRemoteSession() && networkMonitor.isOnline()) {
-            try { refreshOrderAndItsPendingCommands(request.orderId) }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (!failure.isNetworkFailure()) return Result.failure(failure) }
-        }
-        val order = orderDao.getById(request.orderId) ?: return Result.failure(NoSuchElementException("Orden no disponible en el caché."))
-        if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
-        if (order.estado != OrderStatus.OPEN.databaseValue) {
-            val confirmedTxs = transactionDao.getForOrder(request.orderId)
-            val latestTx = confirmedTxs.maxByOrNull { it.fecha }
-            if (latestTx != null) {
-                return Result.success(PaymentCommand(
-                    idempotencyKey = latestTx.idempotencyKey,
-                    orderId = request.orderId,
-                    status = PaymentStatus.CONFIRMED,
-                    transactionId = latestTx.id,
-                    errorCode = null,
-                ))
-            }
-            return Result.failure(IllegalStateException("La orden no está abierta."))
-        }
-        if (commandDao.countPendingPayments(actor, request.orderId) > 0) return Result.failure(IllegalStateException("La orden tiene un pago pendiente de confirmación."))
-        if (request.amountCents <= 0 || request.allocations.isEmpty() || request.allocations.sumOf { it.amountCents } != request.amountCents) {
-            return Result.failure(IllegalArgumentException("El importe y las asignaciones del pago no coinciden."))
-        }
-        val total = detailDao.getForOrder(request.orderId).filter { it.estadoPago != PaymentLineStatus.CANCELLED.databaseValue }
-            .sumOf { it.cantidad.toLong() * it.precioUnitarioCentavos }
-        if (request.amountCents > total - transactionDao.getPaidAmount(request.orderId)) return Result.failure(IllegalArgumentException("El pago supera el saldo pendiente de la orden."))
-        if (request.allocations.map { it.orderDetailId }.distinct().size != request.allocations.size) return Result.failure(IllegalArgumentException("No se permiten asignaciones duplicadas para una partida."))
-        val lines = detailDao.getForOrder(request.orderId).associateBy { it.id }
-        for (allocation in request.allocations) {
-            val line = lines[allocation.orderDetailId] ?: return Result.failure(IllegalArgumentException("La asignación no pertenece a la orden."))
-            if (allocation.quantity <= 0 || allocation.quantity > line.cantidad || allocation.amountCents < 0 || allocation.stockQuantity < 0 || allocation.stockQuantity > allocation.quantity ||
-                allocation.amountCents > allocation.quantity.toLong() * line.precioUnitarioCentavos ||
-                (allocation.amountCents == 0L && allocation.stockQuantity == 0)) return Result.failure(IllegalArgumentException("Cantidad o importe de asignación inválido."))
-            val product = productDao.getById(line.productoId) ?: return Result.failure(IllegalStateException("Sin catálogo local para validar el inventario."))
-            if (allocation.stockQuantity > 0 && (!product.activo || !product.controlaInventario)) return Result.failure(IllegalStateException("La partida no puede generar descuento de inventario."))
-            if (allocation.stockQuantity > 0 && (product.stockActual ?: 0) < allocation.stockQuantity) return Result.failure(IllegalStateException("El stock local no alcanza para este pago."))
-        }
-        val key = UUID.randomUUID().toString()
-        val allocJson = buildJsonArray {
-            request.allocations.forEach { allocation ->
-                add(buildJsonObject {
-                    put("detalle_orden_id", allocation.orderDetailId); put("cantidad", allocation.quantity)
-                    put("monto", allocation.amountCents); put("cantidad_stock", allocation.stockQuantity)
-                    if (allocation.stockQuantity > 0) put("stock_idempotency_key", UUID.randomUUID().toString())
-                })
-            }
-        }
-        val payload = RegisterPaymentPayload(request.orderId, request.amountCents, request.method.databaseValue, key, allocJson)
-        val command = OrderCommandEntity(key, actor, request.orderId, PAYMENT_COMMAND, request.orderId, "INSERT",
-            Json.encodeToString(RegisterPaymentPayload.serializer(), payload), 0)
         return try {
-            database.withTransaction { commandDao.insert(command) }
-            val earlierMutations = commandDao.getRecoverableForOrder(actor, request.orderId)
-                .any { it.idempotencyKey != key && it.entity != PAYMENT_COMMAND }
-            val result = if (earlierMutations) command else submit(command)
-            if (result.status == OrderCommandEntity.SYNCED) refreshConfirmedPayments(request.orderId)
-            val body = result.resultJson?.let { Json.decodeFromString<SyncCommandResponse>(it) }
-            Result.success(PaymentCommand(key, request.orderId,
-                if (result.status == OrderCommandEntity.REJECTED) PaymentStatus.REJECTED else if (result.status == OrderCommandEntity.SYNCED) PaymentStatus.CONFIRMED else PaymentStatus.PENDING_SYNC,
-                body?.transactionId, result.lastErrorCode ?: body?.reason))
+            withTimeout(15_000L) {
+                if (hasRemoteSession() && networkMonitor.isOnline()) {
+                    try { refreshOrderAndItsPendingCommands(request.orderId) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { if (!failure.isNetworkFailure()) return@withTimeout Result.failure(failure) }
+                }
+                val order = orderDao.getById(request.orderId) ?: return@withTimeout Result.failure(NoSuchElementException("Orden no disponible en el caché."))
+                if (order.syncState != OrderEntity.SYNCED && order.actorUserId != actor) return@withTimeout Result.failure(IllegalStateException("La orden pertenece a otra sesión local no sincronizada."))
+                if (order.estado != OrderStatus.OPEN.databaseValue) {
+                    val confirmedTxs = transactionDao.getForOrder(request.orderId)
+                    val latestTx = confirmedTxs.maxByOrNull { it.fecha }
+                    if (latestTx != null) {
+                        return@withTimeout Result.success(PaymentCommand(
+                            idempotencyKey = latestTx.idempotencyKey,
+                            orderId = request.orderId,
+                            status = PaymentStatus.CONFIRMED,
+                            transactionId = latestTx.id,
+                            errorCode = null,
+                        ))
+                    }
+                    return@withTimeout Result.failure(IllegalStateException("La orden no está abierta."))
+                }
+                if (commandDao.countPendingPayments(actor, request.orderId) > 0) return@withTimeout Result.failure(IllegalStateException("La orden tiene un pago pendiente de confirmación."))
+                if (request.amountCents <= 0 || request.allocations.isEmpty() || request.allocations.sumOf { it.amountCents } != request.amountCents) {
+                    return@withTimeout Result.failure(IllegalArgumentException("El importe y las asignaciones del pago no coinciden."))
+                }
+                val total = detailDao.getForOrder(request.orderId).filter { it.estadoPago != PaymentLineStatus.CANCELLED.databaseValue }
+                    .sumOf { it.cantidad.toLong() * it.precioUnitarioCentavos }
+                if (request.amountCents > total - transactionDao.getPaidAmount(request.orderId)) return@withTimeout Result.failure(IllegalArgumentException("El pago supera el saldo pendiente de la orden."))
+                if (request.allocations.map { it.orderDetailId }.distinct().size != request.allocations.size) return@withTimeout Result.failure(IllegalArgumentException("No se permiten asignaciones duplicadas para una partida."))
+                val lines = detailDao.getForOrder(request.orderId).associateBy { it.id }
+                for (allocation in request.allocations) {
+                    val line = lines[allocation.orderDetailId] ?: return@withTimeout Result.failure(IllegalArgumentException("La asignación no pertenece a la orden."))
+                    if (allocation.quantity <= 0 || allocation.quantity > line.cantidad || allocation.amountCents < 0 || allocation.stockQuantity < 0 || allocation.stockQuantity > allocation.quantity ||
+                        allocation.amountCents > allocation.quantity.toLong() * line.precioUnitarioCentavos ||
+                        (allocation.amountCents == 0L && allocation.stockQuantity == 0)) return@withTimeout Result.failure(IllegalArgumentException("Cantidad o importe de asignación inválido."))
+                    val product = productDao.getById(line.productoId) ?: return@withTimeout Result.failure(IllegalStateException("Sin catálogo local para validar el inventario."))
+                    if (allocation.stockQuantity > 0 && (!product.activo || !product.controlaInventario)) return@withTimeout Result.failure(IllegalStateException("La partida no puede generar descuento de inventario."))
+                    if (allocation.stockQuantity > 0 && (product.stockActual ?: 0) < allocation.stockQuantity) return@withTimeout Result.failure(IllegalStateException("El stock local no alcanza para este pago."))
+                }
+                val key = UUID.randomUUID().toString()
+                val allocJson = buildJsonArray {
+                    request.allocations.forEach { allocation ->
+                        add(buildJsonObject {
+                            put("detalle_orden_id", allocation.orderDetailId); put("cantidad", allocation.quantity)
+                            put("monto", allocation.amountCents); put("cantidad_stock", allocation.stockQuantity)
+                            if (allocation.stockQuantity > 0) put("stock_idempotency_key", UUID.randomUUID().toString())
+                        })
+                    }
+                }
+                val payload = RegisterPaymentPayload(request.orderId, request.amountCents, request.method.databaseValue, key, allocJson)
+                val command = OrderCommandEntity(key, actor, request.orderId, PAYMENT_COMMAND, request.orderId, "INSERT",
+                    Json.encodeToString(RegisterPaymentPayload.serializer(), payload), 0)
+                database.withTransaction { commandDao.insert(command) }
+                val earlierMutations = commandDao.getRecoverableForOrder(actor, request.orderId)
+                    .any { it.idempotencyKey != key && it.entity != PAYMENT_COMMAND }
+                val result = if (earlierMutations) command else submit(command)
+                if (result.status == OrderCommandEntity.SYNCED) refreshConfirmedPayments(request.orderId)
+                val body = result.resultJson?.let { Json.decodeFromString<SyncCommandResponse>(it) }
+                Result.success(PaymentCommand(key, request.orderId,
+                    if (result.status == OrderCommandEntity.REJECTED) PaymentStatus.REJECTED else if (result.status == OrderCommandEntity.SYNCED) PaymentStatus.CONFIRMED else PaymentStatus.PENDING_SYNC,
+                    body?.transactionId, result.lastErrorCode ?: body?.reason))
+            }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { Result.failure(failure) }
     }
@@ -199,14 +202,9 @@ class PaymentRepositoryImpl @Inject constructor(
     }
 
     private suspend fun refreshOrderAndItsPendingCommands(orderId: String) {
-        syncActorCommands(includePayments = true, force = true)
-        val actor = actorId() ?: return
-        val rows = supabase.from(ORDERS).select(columns = ORDER_COLUMNS) { filter { eq("id", orderId) } }.decodeList<OrderDto>()
-        val details = supabase.from(ORDER_DETAILS).select(columns = DETAIL_COLUMNS) { filter { eq("orden_id", orderId) } }.decodeList<OrderDetailDto>()
-        database.withTransaction {
-            rows.firstOrNull()?.let { row -> if (commandDao.countPendingForEntity(actor, row.id) == 0) orderDao.upsert(row.toEntity(actor)) }
-            details.forEach { row -> if (commandDao.countPendingForEntity(actor, row.id) == 0) detailDao.upsert(row.toEntity()) }
-        }
+        try {
+            syncActorCommands(includePayments = true, force = true)
+        } catch (_: Exception) {}
         refreshConfirmedPayments(orderId)
     }
 

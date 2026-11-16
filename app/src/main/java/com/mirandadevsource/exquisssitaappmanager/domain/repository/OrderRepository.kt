@@ -15,6 +15,7 @@ interface OrderRepository {
     fun observeOrder(orderId: String): Flow<Order?>
     fun observeOrderDetails(orderId: String): Flow<List<OrderDetail>>
     suspend fun refreshOrders(): Result<Unit>
+    suspend fun refreshOrder(orderId: String): Result<Unit> = Result.success(Unit)
     suspend fun getOrderPage(
         filter: OrderPageFilter = OrderPageFilter(),
         page: PageRequest = PageRequest(),
